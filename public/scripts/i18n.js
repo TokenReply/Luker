@@ -2,8 +2,15 @@ import { registerDebugFunction } from './power-user.js';
 import { updateSecretDisplay } from './secrets.js';
 
 const storageKey = 'language';
+// lorestage: one-time reset of any browser-cached zh-cn / etc. set by the original navigator.language fallback.
+// After this reset, user choice via ST settings UI persists (it writes to localStorage.language).
+const _lorestageLangReset = 'lorestage_lang_reset_v1';
+if (!localStorage.getItem(_lorestageLangReset)) {
+    localStorage.removeItem(storageKey);
+    localStorage.setItem(_lorestageLangReset, '1');
+}
 const overrideLanguage = localStorage.getItem(storageKey);
-const localeFile = String(overrideLanguage || navigator.language || navigator.userLanguage || 'en').toLowerCase();
+const localeFile = String(overrideLanguage || 'en').toLowerCase();  // lorestage: default to English; localStorage override still wins
 const localeFallbacks = {
     'zh-cn': ['zh-tw'],
     'zh-tw': ['zh-cn'],

@@ -2,7 +2,7 @@
 <html>
 
 <head>
-    <title>Luker</title>
+    <title>Lorestage</title>
     <base href="/">
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, viewport-fit=cover, initial-scale=1, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
@@ -47,6 +47,7 @@
     <link rel="stylesheet" type="text/css" href="scripts/variable-op-log/panel.css">
     <link rel="stylesheet" type="text/css" href="css/user.css">
     <link rel="stylesheet" type="text/css" href="css/request-inspector.css">
+    <link rel="icon" type="image/svg+xml" href="img/favicon.svg?v=2026052701">
     <link rel="icon" type="image/x-icon" href="favicon.ico">
     <!-- Scripts are loaded at the end of the body to improve page load speed -->
 </head>
@@ -5107,7 +5108,15 @@
                                 <i class="fa-fw fa-solid fa-user-tie"></i>
                                 <span data-i18n="Admin Panel">Admin Panel</span>
                             </div>
-                            <div id="logout_button" class="margin0 menu_button_icon menu_button">
+                            <a id="lorestage_account_link" href="/auth/settings" class="margin0 menu_button_icon menu_button" title="Manage your Lorestage account (display name / password)" style="text-decoration:none;color:inherit;">
+                                <i class="fa-fw fa-solid fa-id-card"></i>
+                                <span>Account &amp; Email</span>
+                            </a>
+                            <a id="lorestage_logout_link" href="/auth/logout" class="margin0 menu_button_icon menu_button" title="Sign out of Lorestage (also clears SillyTavern session)" style="text-decoration:none;color:inherit;">
+                                <i class="fa-fw fa-solid fa-right-from-bracket"></i>
+                                <span>Sign out</span>
+                            </a>
+                            <div id="logout_button" class="margin0 menu_button_icon menu_button" style="display:none;">
                                 <i class="fa-fw fa-solid fa-right-from-bracket"></i>
                                 <span data-i18n="Logout">Logout</span>
                             </div>
@@ -5468,7 +5477,7 @@
                                 <input id="play_sound_unfocused" type="checkbox" />
                                 <small data-i18n="Background Sound Only">Background Sound Only</small>
                             </label>
-                            <label for="message_complete_notification" class="checkbox_label" title="Show a notification when message generation finishes while Luker is in the background." data-i18n="[title]Show a notification when message generation finishes while Luker is in the background.">
+                            <label for="message_complete_notification" class="checkbox_label" title="Show a notification when message generation finishes while Lorestage is in the background." data-i18n="[title]Show a notification when message generation finishes while Lorestage is in the background.">
                                 <input id="message_complete_notification" type="checkbox" />
                                 <small data-i18n="Generation Complete Notification">Generation Complete Notification</small>
                             </label>
@@ -7745,15 +7754,15 @@
 
         <div id="onboarding_template" class="template_element">
             <div class="onboarding">
-                <h3 data-i18n="Welcome to Luker!">Welcome to Luker!</h3>
+                <h3 data-i18n="Welcome to Lorestage!">Welcome to Lorestage!</h3>
                 <div id="onboarding-UI-language-block" class="flex-container alignItemsBaseline">
                     <span data-i18n="UI Language">Language:</span>
                     <select id="onboarding_ui_language_select" class="flex1 margin0">
                         <option value="en">English</option>
                     </select>
                 </div>
-                <b data-i18n="Luker is aimed at advanced users.">
-                    Luker is aimed at advanced users.
+                <b data-i18n="Lorestage is aimed at advanced users.">
+                    Lorestage is aimed at advanced users.
                 </b>
                 <ul class="justifyLeft marginTopBot5">
                     <li><span data-i18n="welcome_message_part_1">Read the</span> <a href="https://docs.sillytavern.app/" target="_blank" data-i18n="welcome_message_part_2">Official Documentation</a><span data-i18n="welcome_message_part_3">.</span></li>

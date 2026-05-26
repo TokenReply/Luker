@@ -1,12 +1,12 @@
 {
     "firstRun": true,
     "username": "User",
-    "api_server": "http://127.0.0.1:5000/api",
+    "api_server": "https://api.tokenreply.com/v1",
     "preset_settings": "RecoveredRuins",
     "user_avatar": "user-default.png",
     "amount_gen": 350,
     "max_context": 8192,
-    "main_api": "koboldhorde",
+    "main_api": "openai",
     "world_info_settings": {
         "world_info": {
             "globalSelect": []
@@ -47,7 +47,7 @@
         "stopping_strings": [],
         "ban_eos_token": false,
         "skip_special_tokens": true,
-        "streaming": false,
+        "streaming": true,
         "sampler_priority": [
             "temperature",
             "dynamic_temperature",
@@ -75,7 +75,11 @@
         "mirostat_eta": 0.1,
         "guidance_scale": 1,
         "negative_prompt": "",
-        "rep_pen_size": 0
+        "rep_pen_size": 0,
+        "type": "generic",
+        "server_urls": {
+            "generic": "https://api.tokenreply.com/v1"
+        }
     },
     "swipes": true,
     "horde_settings": {
@@ -586,7 +590,7 @@
         "ai21_model": "jamba-large",
         "openrouter_model": "OR_Website",
         "reverse_proxy": "",
-        "chat_completion_source": "openai",
+        "chat_completion_source": "custom",
         "max_context_unlocked": false,
         "api_url_scale": "",
         "show_external_models": false,
@@ -594,6 +598,8 @@
         "assistant_prefill": "",
         "assistant_impersonation": "",
         "use_sysprompt": false,
-        "squash_system_messages": false
+        "squash_system_messages": false,
+        "custom_url": "https://api.tokenreply.com/v1",
+        "custom_model": "claude-sonnet-4-5"
     }
 }

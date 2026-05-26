@@ -17,6 +17,29 @@ export {
     SimpleMutex as ModuleWorkerWrapper,
 };
 
+// lorestage: shim for deprecated SillyTavern Extras integration. Luker fork stripped
+// the Extras backend (Python-based image captioning / embeddings server) but some
+// third-party extensions still import doExtrasFetch as a static reference. Without
+// this export, those extensions fail at ES module load with:
+//   'The requested module ... does not provide an export named doExtrasFetch'
+// breaking the entire extension. The shim throws only when actually called, so
+// extensions that never reach the Extras-dependent code path still work normally.
+export async function doExtrasFetch(_url, _options) {
+    throw new Error('lorestage: SillyTavern Extras is not deployed; doExtrasFetch is a stub. ' +
+        'If you need Extras features (image captioning, etc.), they must be implemented natively or via a different backend.');
+}
+
+// lorestage: shim for upstream SillyTavern's getApiUrl. Originally returned the Extras
+// API base URL. We return empty string so calling code at least doesn't crash on import;
+// any code that depends on a real Extras URL will fail when it tries to fetch.
+export function getApiUrl() {
+    return '';
+}
+
+// lorestage: shim for upstream modules array (was list of available Extras modules).
+// Empty array — third-party extensions that check 'X' in modules see false.
+export let modules = [];
+
 /** @type {string[]} */
 export let extensionNames = [];
 

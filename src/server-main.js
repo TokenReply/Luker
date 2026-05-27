@@ -84,6 +84,7 @@ import {
     migrateSystemPrompts,
     migrateUserData,
     requireLoginMiddleware,
+    requireAdminMiddleware,
     enforceUserQuotaMiddleware,
     setUserDataMiddleware,
     shouldRedirectToLogin,
@@ -354,11 +355,11 @@ app.post('/api/ping', (request, response) => {
 });
 
 // Debug export endpoints
-app.get('/api/debug/backend-logs', (_request, response) => {
+app.get('/api/debug/backend-logs', requireAdminMiddleware, (_request, response) => {
     response.json(backendLogBuffer);
 });
 
-app.get('/api/debug/export', async (request, response) => {
+app.get('/api/debug/export', requireAdminMiddleware, async (request, response) => {
     const bundle = {
         exportedAt: new Date().toISOString(),
         backendLogs: backendLogBuffer,

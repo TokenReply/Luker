@@ -315,6 +315,10 @@ export function createGenerationJob(request, options) {
         : null;
     const chatKey = getPersistChatKey(persistTarget);
     const existing = generationJobs.get(jobId);
+    if (existing && existing.handle !== request.user.profile.handle) {
+        console.warn('Rejected cross-user generation job id reuse:', jobId);
+        return null;
+    }
     const job = existing || {
         id: jobId,
         handle: request.user.profile.handle,

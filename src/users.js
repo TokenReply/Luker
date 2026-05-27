@@ -29,6 +29,8 @@ const AVATAR_PREFIX = 'avatar:';
 const ENABLE_ACCOUNTS = getConfigValue('enableUserAccounts', false, 'boolean');
 const AUTHELIA_AUTH = getConfigValue('sso.autheliaAuth', false, 'boolean');
 const AUTHENTIK_AUTH = getConfigValue('sso.authentikAuth', false, 'boolean');
+const SSO_SHARED_SECRET = String(getConfigValue('sso.sharedSecret', '', null) || '');
+const SSO_SHARED_SECRET_HEADER = 'X-Lorestage-SSO-Secret';
 const PER_USER_BASIC_AUTH = getConfigValue('perUserBasicAuth', false, 'boolean');
 const ANON_CSRF_SECRET = crypto.randomBytes(64).toString('base64');
 const STORAGE_USAGE_CACHE = new Cache(5000);
@@ -897,6 +899,39 @@ async function authentikUserLogin(request) {
     return headerUserLogin(request, 'X-Authentik-Username');
 }
 
+function getEnabledSsoHeaders() {
+    const headers = [];
+    if (AUTHELIA_AUTH) {
+        headers.push('Remote-User');
+    }
+    if (AUTHENTIK_AUTH) {
+        headers.push('X-Authentik-Username');
+    }
+    return headers;
+}
+
+function clearSessionIdentity(request) {
+    if (!request.session) {
+        return;
+    }
+
+    request.session.handle = null;
+    request.session.csrfToken = null;
+    request.session.version = null;
+}
+
+function hasValidSsoSharedSecret(request) {
+    if (!SSO_SHARED_SECRET) {
+        return true;
+    }
+
+    return request.get(SSO_SHARED_SECRET_HEADER) === SSO_SHARED_SECRET;
+}
+
+export function isSsoHeaderAuthEnabled() {
+    return AUTHELIA_AUTH || AUTHENTIK_AUTH;
+}
+
 /**
  * Check if the request can authenticate SSO users based on the trusted proxies configuration and the request's IP address.
  * @param {string} ip The IP address of the request
@@ -946,9 +981,20 @@ async function headerUserLogin(request, header = 'Remote-User') {
         return false;
     }
 
+    const result = await resolveTrustedHeaderUser(request, header);
+    if (!result?.user) {
+        return false;
+    }
+
+    request.session.handle = result.handle;
+    request.session.version = getAccountVersion(result.user);
+    return true;
+}
+
+async function resolveTrustedHeaderUser(request, header = 'Remote-User') {
     const remoteUser = request.get(header);
     if (!remoteUser) {
-        return false;
+        return { state: 'missing' };
     }
     console.debug(`Attempting auto-login for user from header ${header}: ${remoteUser}`);
 
@@ -956,20 +1002,62 @@ async function headerUserLogin(request, header = 'Remote-User') {
     const isTrusted = isRequestFromTrustedProxy(ip);
     if (!isTrusted) {
         console.warn(color.yellow(`Received ${header} header from untrusted IP ${ip}. Ignoring for auto-login.`));
-        return false;
+        return { state: 'untrusted' };
+    }
+    if (!hasValidSsoSharedSecret(request)) {
+        console.warn(color.yellow(`Received ${header} header without a valid SSO shared secret. Ignoring for auto-login.`));
+        return { state: 'untrusted' };
     }
 
     const userHandles = await getAllUserHandles();
+    const normalizedRemoteUser = String(remoteUser).toLowerCase();
     for (const userHandle of userHandles) {
-        if (remoteUser.toLowerCase() === userHandle) {
+        if (normalizedRemoteUser === userHandle) {
             const user = await storage.getItem(toKey(userHandle));
             if (user && user.enabled) {
-                request.session.handle = userHandle;
-                request.session.version = getAccountVersion(user);
-                return true;
+                return { state: 'matched', handle: userHandle, user };
             }
         }
     }
+    return { state: 'not_found' };
+}
+
+export function hasTrustedSsoHeader(request) {
+    for (const header of getEnabledSsoHeaders()) {
+        if (!request.get(header)) {
+            continue;
+        }
+
+        const ip = getIpFromRequest(request);
+        if (isRequestFromTrustedProxy(ip) && hasValidSsoSharedSecret(request)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+async function syncSessionWithTrustedSso(request) {
+    if (!request.session) {
+        return false;
+    }
+
+    for (const header of getEnabledSsoHeaders()) {
+        const result = await resolveTrustedHeaderUser(request, header);
+        if (result.state === 'missing' || result.state === 'untrusted') {
+            continue;
+        }
+
+        if (result.state === 'matched') {
+            request.session.handle = result.handle;
+            request.session.version = getAccountVersion(result.user);
+            return true;
+        }
+
+        clearSessionIdentity(request);
+        return false;
+    }
+
     return false;
 }
 
@@ -1049,6 +1137,8 @@ export async function setUserDataMiddleware(request, response, next) {
         console.error('Session not available');
         return response.sendStatus(500);
     }
+
+    await syncSessionWithTrustedSso(request);
 
     // If user accounts are enabled, get the user from the session
     let handle = request.session?.handle;
@@ -1184,6 +1274,9 @@ export async function loginPageMiddleware(request, response) {
 
         if (autoLogin) {
             return response.redirect('/');
+        }
+        if (isSsoHeaderAuthEnabled()) {
+            return response.sendStatus(403);
         }
     } catch (error) {
         console.error('Error during auto-login:', error);

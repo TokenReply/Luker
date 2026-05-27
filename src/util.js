@@ -127,6 +127,15 @@ export function getBasicAuthHeader(auth) {
     return `Basic ${encoded}`;
 }
 
+function getSimpleGitOptions(baseDir = undefined) {
+    const block = Number(process.env.LUKER_GIT_REMOTE_TIMEOUT_MS || 3000);
+    const options = baseDir ? { baseDir } : {};
+    if (Number.isFinite(block) && block > 0) {
+        options.timeout = { block };
+    }
+    return options;
+}
+
 /**
  * Returns the version of the running instance. Get the version from package.json and git metadata.
  * Also returns the agent string for the Horde API.
@@ -145,7 +154,7 @@ export async function getVersion() {
         const pkgJson = require(path.join(serverDirectory, './package.json'));
         pkgVersion = pkgJson.version;
         if (commandExistsSync('git')) {
-            const git = simpleGit({ baseDir: serverDirectory });
+            const git = simpleGit(getSimpleGitOptions(serverDirectory));
             try {
                 gitRevision = await git.revparse(['--short', 'HEAD']);
                 gitBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
@@ -160,7 +169,7 @@ export async function getVersion() {
                 const remoteUrl = String(process.env.LUKER_UPDATE_REMOTE || 'https://github.com/funnycups/Luker.git').trim();
                 if (remoteUrl) {
                     try {
-                        remoteTags = await simpleGit().listRemote(['--tags', remoteUrl]);
+                        remoteTags = await simpleGit(getSimpleGitOptions()).listRemote(['--tags', remoteUrl]);
                     } catch {
                         // Silent fallback by design.
                     }

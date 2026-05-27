@@ -7,7 +7,7 @@ import { getIpAddress, retryAfter } from '../express-common.js';
 import { color, Cache, getConfigValue } from '../util.js';
 import { getAdminSettings } from '../admin-settings.js';
 import { checkForNewContent, CONTENT_TYPES } from './content-manager.js';
-import { KEY_PREFIX, getUserAvatar, toKey, getPasswordHash, getPasswordSalt, getAccountVersion, getAllUserHandles, getUserDirectories, ensurePublicDirectoriesExist, createBackupArchive } from '../users.js';
+import { KEY_PREFIX, getUserAvatar, toKey, getPasswordHash, getPasswordSalt, getAccountVersion, getAllUserHandles, getUserDirectories, ensurePublicDirectoriesExist, createBackupArchive, hasTrustedSsoHeader, isSsoHeaderAuthEnabled } from '../users.js';
 import { consumeLanMigrationOffer } from '../lan-migration.js';
 
 const DISCREET_LOGIN = getConfigValue('enableDiscreetLogin', false, 'boolean');
@@ -224,6 +224,18 @@ function redirectToLoginWithError(response, reason) {
     return response.redirect(target);
 }
 
+function rejectLocalAuthUnderSso(request, response, always = false) {
+    if (!isSsoHeaderAuthEnabled()) {
+        return false;
+    }
+    if (!always && !hasTrustedSsoHeader(request)) {
+        return false;
+    }
+
+    response.status(403).json({ error: 'Local account endpoints are disabled under SSO.' });
+    return true;
+}
+
 router.get('/transfer/backup/:token', async (request, response) => {
     try {
         const offer = consumeLanMigrationOffer(request.params.token);
@@ -272,6 +284,10 @@ router.post('/registration/info', async (_request, response) => {
 
 router.post('/register', async (request, response) => {
     try {
+        if (rejectLocalAuthUnderSso(request, response)) {
+            return;
+        }
+
         const settings = await getAdminSettings();
         if (!settings?.accountRegistration?.enabled) {
             return response.status(403).json({ error: 'Account registration is disabled.' });
@@ -341,6 +357,10 @@ router.post('/register', async (request, response) => {
 
 router.get('/oauth/start/:provider', async (request, response) => {
     try {
+        if (rejectLocalAuthUnderSso(request, response, true)) {
+            return;
+        }
+
         const provider = String(request.params.provider || '').toLowerCase();
         if (!['github', 'discord'].includes(provider)) {
             return redirectToLoginWithError(response, 'unsupported_provider');
@@ -400,6 +420,10 @@ router.get('/oauth/start/:provider', async (request, response) => {
 
 router.get('/oauth/callback/:provider', async (request, response) => {
     try {
+        if (rejectLocalAuthUnderSso(request, response, true)) {
+            return;
+        }
+
         const provider = String(request.params.provider || '').toLowerCase();
         const code = String(request.query.code || '');
         const state = String(request.query.state || '');
@@ -539,6 +563,10 @@ router.get('/oauth/callback/:provider', async (request, response) => {
 
 router.post('/list', async (_request, response) => {
     try {
+        if (rejectLocalAuthUnderSso(_request, response, true)) {
+            return;
+        }
+
         if (DISCREET_LOGIN) {
             return response.sendStatus(204);
         }
@@ -572,6 +600,10 @@ router.post('/list', async (_request, response) => {
 
 router.post('/login', async (request, response) => {
     try {
+        if (rejectLocalAuthUnderSso(request, response, true)) {
+            return;
+        }
+
         if (!request.body.handle) {
             console.warn('Login failed: Missing required fields');
             return response.status(400).json({ error: 'Missing required fields' });
@@ -621,6 +653,10 @@ router.post('/login', async (request, response) => {
 
 router.post('/recover-step1', async (request, response) => {
     try {
+        if (rejectLocalAuthUnderSso(request, response, true)) {
+            return;
+        }
+
         if (!request.body.handle) {
             console.warn('Recover step 1 failed: Missing required fields');
             return response.status(400).json({ error: 'Missing required fields' });
@@ -661,6 +697,10 @@ router.post('/recover-step1', async (request, response) => {
 
 router.post('/recover-step2', async (request, response) => {
     try {
+        if (rejectLocalAuthUnderSso(request, response, true)) {
+            return;
+        }
+
         if (!request.body.handle || !request.body.code) {
             console.warn('Recover step 2 failed: Missing required fields');
             return response.status(400).json({ error: 'Missing required fields' });

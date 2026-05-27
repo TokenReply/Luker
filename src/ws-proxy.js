@@ -65,26 +65,26 @@ const TICKET_TTL_MS = 30_000;
 const TICKET_CLEANUP_INTERVAL_MS = 60_000;
 export const TICKET_PROTOCOL_PREFIX = 'luker-ws-ticket.';
 
-/** @type {Map<string, { createdAt: number }>} */
+/** @type {Map<string, { createdAt: number, handle: string }>} */
 const tickets = new Map();
 
-function mintTicket() {
+function mintTicket(handle) {
     const ticket = crypto.randomBytes(32).toString('hex');
-    tickets.set(ticket, { createdAt: Date.now() });
+    tickets.set(ticket, { createdAt: Date.now(), handle: String(handle || '') });
     return ticket;
 }
 
 /**
- * Validate AND consume a ticket atomically. Returns true iff the ticket
- * exists, is not expired, and has not been used. The entry is deleted in
+ * Validate AND consume a ticket atomically. Returns the ticket entry iff the
+ * ticket exists, is not expired, and has not been used. The entry is deleted in
  * either case to enforce single-use semantics.
  */
 function consumeTicket(ticket) {
     const entry = tickets.get(ticket);
-    if (!entry) return false;
+    if (!entry) return null;
     tickets.delete(ticket);
-    if (Date.now() - entry.createdAt > TICKET_TTL_MS) return false;
-    return true;
+    if (Date.now() - entry.createdAt > TICKET_TTL_MS) return null;
+    return entry;
 }
 
 setInterval(() => {
@@ -101,8 +101,13 @@ setInterval(() => {
  */
 export const wsTicketRouter = express.Router();
 
-wsTicketRouter.post('/', (_req, res) => {
-    const ticket = mintTicket();
+wsTicketRouter.post('/', (req, res) => {
+    const handle = String(req.user?.profile?.handle || '');
+    if (!handle) {
+        return res.sendStatus(403);
+    }
+
+    const ticket = mintTicket(handle);
     res.json({ ticket });
 });
 
@@ -129,7 +134,8 @@ export const __wsTicketTestUtils = {
  * @property {boolean} done — response fully received
  * @property {string|null} error — error message if failed
  * @property {number} lastActivity — updated on every chunk/head/end
- * @property {object} ctx — { cookie, csrfToken, originalHost }
+ * @property {string} ownerHandle
+ * @property {object} ctx — { cookie, csrfToken, originalHost, handle }
  */
 
 /**
@@ -178,10 +184,12 @@ export function initWsProxy(servers, expressApp) {
                 return;
             }
             const ticket = ticketProto.slice(TICKET_PROTOCOL_PREFIX.length);
-            if (!consumeTicket(ticket)) {
+            const ticketEntry = consumeTicket(ticket);
+            if (!ticketEntry) {
                 rejectUpgrade(socket, 401, 'invalid_or_expired_ticket', req);
                 return;
             }
+            req.lukerWsHandle = ticketEntry.handle;
 
             wss.handleUpgrade(req, socket, head, (ws) => {
                 wss.emit('connection', ws, req);
@@ -221,6 +229,15 @@ function cleanupJobs() {
     }
 }
 
+function deleteHeaderCaseInsensitive(headers, name) {
+    const target = name.toLowerCase();
+    for (const key of Object.keys(headers)) {
+        if (key.toLowerCase() === target) {
+            delete headers[key];
+        }
+    }
+}
+
 /**
  * Handle a single WS connection.
  * @param {import('ws').WebSocket} ws
@@ -232,8 +249,9 @@ function handleConnection(ws, req) {
     const upgradeUrl = new URL(req.url, `http://${req.headers.host}`);
     const csrfToken = upgradeUrl.searchParams.get('csrf') || '';
     const originalHost = req.headers.host || 'localhost';
+    const handle = String(req.lukerWsHandle || '');
 
-    const ctx = { cookie, authorization, csrfToken, originalHost };
+    const ctx = { cookie, authorization, csrfToken, originalHost, handle };
 
     /** Track which job IDs this connection owns */
     const ownedJobs = new Set();
@@ -259,7 +277,7 @@ function handleConnection(ws, req) {
 
         if (msg.type === 'abort') {
             const job = jobs.get(msg.id);
-            if (job) {
+            if (job && job.ownerHandle === ctx.handle) {
                 job.ac.abort();
                 jobs.delete(msg.id);
                 ownedJobs.delete(msg.id);
@@ -268,14 +286,16 @@ function handleConnection(ws, req) {
         }
 
         if (msg.type === 'resume') {
-            handleResume(ws, msg.id, ownedJobs, msg.fromChunk);
+            handleResume(ws, msg.id, ownedJobs, ctx, msg.fromChunk);
             return;
         }
 
         if (msg.type === 'request') {
             const id = msg.id;
-            ownedJobs.add(id);
             startJob(ws, msg, ctx);
+            if (id && jobs.get(id)?.ownerHandle === ctx.handle) {
+                ownedJobs.add(id);
+            }
         }
     });
 
@@ -285,7 +305,7 @@ function handleConnection(ws, req) {
         // The backend dispatch continues running, buffering chunks.
         for (const id of ownedJobs) {
             const job = jobs.get(id);
-            if (job) {
+            if (job && job.ownerHandle === ctx.handle) {
                 job.ws = null;
             }
         }
@@ -300,10 +320,14 @@ function handleConnection(ws, req) {
 /**
  * Resume a job after WS reconnect — replay buffered data.
  */
-function handleResume(ws, id, ownedJobs, fromChunk = 0) {
+function handleResume(ws, id, ownedJobs, ctx, fromChunk = 0) {
     const job = jobs.get(id);
     if (!job) {
         // Job expired or never existed
+        wsSend(ws, { type: 'error', id, message: 'Job not found (expired or invalid)' });
+        return;
+    }
+    if (job.ownerHandle !== ctx.handle) {
         wsSend(ws, { type: 'error', id, message: 'Job not found (expired or invalid)' });
         return;
     }
@@ -403,7 +427,6 @@ function createMockResponse(id, req, job) {
         return origSetHeader(name, value);
     };
 
-    const origWrite = res.write.bind(res);
     res.write = (chunk, encoding) => {
         if (!headSent) sendHead();
 
@@ -443,11 +466,17 @@ function createMockResponse(id, req, job) {
  */
 async function startJob(ws, msg, ctx) {
     const { id, url, method, headers: clientHeaders, body } = msg;
+    if (!id || jobs.has(id)) {
+        wsSend(ws, { type: 'error', id, message: jobs.has(id) ? 'Duplicate job id' : 'Missing job id' });
+        return;
+    }
+
     const ac = new AbortController();
 
     /** @type {Job} */
     const job = {
         id,
+        ownerHandle: ctx.handle,
         ac,
         ws,
         headSent: false,
@@ -481,10 +510,16 @@ async function startJob(ws, msg, ctx) {
 
         // Build request headers — forward client headers + WS context
         const reqHeaders = { ...clientHeaders };
-        reqHeaders['host'] = ctx.originalHost;
-        if (ctx.cookie) reqHeaders['cookie'] = ctx.cookie;
-        if (!reqHeaders['authorization'] && !reqHeaders['Authorization'] && ctx.authorization) {
-            reqHeaders['authorization'] = ctx.authorization;
+        for (const header of ['remote-user', 'x-authentik-username', 'x-authentik-email', 'x-authentik-name', 'x-authentik-uid']) {
+            deleteHeaderCaseInsensitive(reqHeaders, header);
+        }
+        if (ctx.handle) {
+            reqHeaders['x-authentik-username'] = ctx.handle;
+        }
+        reqHeaders.host = ctx.originalHost;
+        if (ctx.cookie) reqHeaders.cookie = ctx.cookie;
+        if (!reqHeaders.authorization && !reqHeaders.Authorization && ctx.authorization) {
+            reqHeaders.authorization = ctx.authorization;
         }
         if (!reqHeaders['x-csrf-token'] && !reqHeaders['X-CSRF-Token'] && ctx.csrfToken) {
             reqHeaders['x-csrf-token'] = ctx.csrfToken;

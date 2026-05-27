@@ -6,7 +6,7 @@ import sanitize from 'sanitize-filename';
 import { sync as writeFileSyncAtomic } from 'write-file-atomic';
 
 import { validateAssetFileName } from './assets.js';
-import { clientRelativePath } from '../util.js';
+import { clientRelativePath, isPathUnderParent } from '../util.js';
 
 export const router = express.Router();
 
@@ -57,8 +57,8 @@ router.post('/delete', async (request, response) => {
             return response.status(400).send('No path specified');
         }
 
-        const pathToDelete = path.join(request.user.directories.root, request.body.path);
-        if (!pathToDelete.startsWith(request.user.directories.files)) {
+        const pathToDelete = path.resolve(request.user.directories.root, request.body.path);
+        if (!isPathUnderParent(request.user.directories.files, pathToDelete)) {
             return response.status(400).send('Invalid path');
         }
 
@@ -84,8 +84,8 @@ router.post('/verify', async (request, response) => {
         const verified = {};
 
         for (const url of request.body.urls) {
-            const pathToVerify = path.join(request.user.directories.root, url);
-            if (!pathToVerify.startsWith(request.user.directories.files)) {
+            const pathToVerify = path.resolve(request.user.directories.root, url);
+            if (!isPathUnderParent(request.user.directories.files, pathToVerify)) {
                 console.warn(`File verification: Invalid path: ${pathToVerify}`);
                 continue;
             }

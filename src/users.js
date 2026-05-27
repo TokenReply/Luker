@@ -836,7 +836,7 @@ export async function tryAutoLogin(request, basicAuthMode) {
         return false;
     }
 
-    if (!request.query.noauto) {
+    if (!isAutoLoginSuppressed(request)) {
         if (await singleUserLogin(request)) {
             return true;
         }
@@ -918,6 +918,23 @@ function clearSessionIdentity(request) {
     request.session.handle = null;
     request.session.csrfToken = null;
     request.session.version = null;
+}
+
+function isAutoLoginSuppressed(request) {
+    const raw = request.query?.noauto;
+    if (Array.isArray(raw)) {
+        return raw.some(value => isTruthyQueryValue(value));
+    }
+
+    return isTruthyQueryValue(raw);
+}
+
+function isTruthyQueryValue(value) {
+    if (value === true || value === '') {
+        return true;
+    }
+
+    return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').toLowerCase());
 }
 
 function hasValidSsoSharedSecret(request) {
@@ -1039,6 +1056,11 @@ export function hasTrustedSsoHeader(request) {
 
 async function syncSessionWithTrustedSso(request) {
     if (!request.session) {
+        return false;
+    }
+
+    if (isAutoLoginSuppressed(request)) {
+        clearSessionIdentity(request);
         return false;
     }
 
@@ -1276,6 +1298,9 @@ export async function loginPageMiddleware(request, response) {
             return response.redirect('/');
         }
         if (isSsoHeaderAuthEnabled()) {
+            if (isAutoLoginSuppressed(request)) {
+                return response.redirect('/auth/logout');
+            }
             return response.sendStatus(403);
         }
     } catch (error) {

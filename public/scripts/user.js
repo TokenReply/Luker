@@ -146,6 +146,7 @@ function parseLogTimeInputValue(value, { roundUpMinute = false } = {}) {
 export async function setUserControls(isEnabled) {
     accountsEnabled = isEnabled;
     installFrontendLogCapture();
+    const hasCentralLogout = $('#lorestage_logout_link').length > 0;
 
     if (!isEnabled) {
         $('#logout_button').hide();
@@ -154,7 +155,7 @@ export async function setUserControls(isEnabled) {
         return;
     }
 
-    $('#logout_button').show();
+    $('#logout_button').toggle(!hasCentralLogout);
     await getCurrentUser();
 }
 
@@ -2752,17 +2753,26 @@ async function openAdminPanel() {
     renderUsers();
 }
 
-
-
 /**
  * Log out the current user.
  * @returns {Promise<void>}
  */
 async function logout() {
-    await fetch('/api/users/logout', {
-        method: 'POST',
-        headers: getRequestHeaders({ omitContentType: true }),
-    });
+    const centralLogoutUrl = document.getElementById('lorestage_logout_link')?.getAttribute('href');
+
+    try {
+        await fetch('/api/users/logout', {
+            method: 'POST',
+            headers: getRequestHeaders({ omitContentType: true }),
+        });
+    } catch (error) {
+        console.warn('Failed to clear local session before logout', error);
+    }
+
+    if (centralLogoutUrl) {
+        window.location.assign(centralLogoutUrl);
+        return;
+    }
 
     // On an explicit logout stop auto login
     // to allow user to change username even
@@ -2818,6 +2828,10 @@ async function extendUserSession() {
 
 jQuery(() => {
     $('#logout_button').on('click', () => {
+        logout();
+    });
+    $('#lorestage_logout_link').on('click', (event) => {
+        event.preventDefault();
         logout();
     });
     $('#admin_button').on('click', () => {

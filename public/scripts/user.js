@@ -149,12 +149,14 @@ export async function setUserControls(isEnabled) {
     const hasCentralLogout = $('#lorestage_logout_link').length > 0;
 
     if (!isEnabled) {
+        $('#lorestage_logout_link').hide();
         $('#logout_button').hide();
         $('#admin_button').show();
         $('#server_logs_button').show();
         return;
     }
 
+    $('#lorestage_logout_link').show();
     $('#logout_button').toggle(!hasCentralLogout);
     await getCurrentUser();
 }

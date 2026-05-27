@@ -37,6 +37,12 @@ verify_logout_flow() {
     rm -f "${headers}"
     return 1
   fi
+  curl -sS -D "${headers}" -o /dev/null "${PUBLIC_BASE_URL}/?noauto=true"
+  if ! grep -Eiq '^location:[[:space:]]*/auth/logout[[:space:]]*$' "${headers}"; then
+    echo "Logout fallback check failed: /?noauto=true must redirect to /auth/logout." >&2
+    rm -f "${headers}"
+    return 1
+  fi
 
   curl -sS -D "${headers}" -o /dev/null "${PUBLIC_BASE_URL}/auth/logout"
   if ! grep -Eiq '^set-cookie:[[:space:]]*__Host-lorestage_session=.*Max-Age=0' "${headers}"; then

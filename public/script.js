@@ -1833,23 +1833,142 @@ export async function pingServer() {
 }
 
 //MARK: firstLoadInit
+function setStartupStage(stage) {
+    try {
+        globalThis.__lorestageStartup = globalThis.__lorestageStartup || {};
+        globalThis.__lorestageStartup.stage = stage;
+        globalThis.__lorestageStartup.updatedAt = new Date().toISOString();
+        globalThis.__lorestageSetStartupStage?.(stage);
+    } catch {
+        // Startup diagnostics must never block startup.
+    }
+}
+
+function getStartupErrorMessage(error) {
+    if (error instanceof Error) {
+        return error.message || error.name || 'Unknown startup error';
+    }
+
+    return String(error || 'Unknown startup error');
+}
+
+function markAppReady() {
+    try {
+        globalThis.__lorestageAppReady = true;
+        setStartupStage('ready');
+    } catch {
+        // Ignore startup diagnostic failures.
+    }
+}
+
+async function showStartupFailure(error, stage = 'first-load') {
+    const message = getStartupErrorMessage(error);
+
+    try {
+        globalThis.__lorestageStartup = globalThis.__lorestageStartup || {};
+        globalThis.__lorestageStartup.stage = stage;
+        globalThis.__lorestageStartup.lastError = message.slice(0, 600);
+        globalThis.__lorestageStartup.failed = true;
+    } catch {
+        // Ignore startup diagnostic failures.
+    }
+
+    if (typeof globalThis.__lorestageShowStartupFailure === 'function') {
+        globalThis.__lorestageShowStartupFailure(stage);
+        return;
+    }
+
+    const preloader = document.getElementById('preloader');
+    const overlay = preloader || document.createElement('div');
+    if (!preloader) {
+        overlay.id = 'lorestage_startup_failure';
+        document.body.appendChild(overlay);
+    }
+
+    overlay.replaceChildren();
+    Object.assign(overlay.style, {
+        alignItems: 'center',
+        background: '#151516',
+        boxSizing: 'border-box',
+        color: '#f4f4f5',
+        display: 'flex',
+        fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        inset: '0',
+        justifyContent: 'center',
+        padding: '24px',
+        position: 'fixed',
+        zIndex: '999999',
+    });
+
+    const panel = document.createElement('div');
+    Object.assign(panel.style, {
+        background: '#242426',
+        border: '1px solid rgba(255, 255, 255, 0.14)',
+        borderRadius: '8px',
+        boxShadow: '0 18px 60px rgba(0, 0, 0, 0.38)',
+        maxWidth: '460px',
+        padding: '22px',
+        width: '100%',
+    });
+
+    const title = document.createElement('h1');
+    title.textContent = 'Lorestage failed to load';
+    title.style.cssText = 'font-size:20px;line-height:1.3;margin:0 0 10px;';
+
+    const detail = document.createElement('p');
+    detail.textContent = `Stage: ${stage} | Error: ${message}`;
+    detail.style.cssText = 'color:#f0c7c7;font-size:12px;line-height:1.45;margin:0 0 16px;word-break:break-word;';
+
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;';
+
+    const reload = document.createElement('button');
+    reload.type = 'button';
+    reload.textContent = 'Reload';
+    reload.style.cssText = 'border:1px solid rgba(255,255,255,.3);border-radius:6px;background:#fff;color:#111;cursor:pointer;font:600 14px system-ui;padding:10px 14px;';
+    reload.addEventListener('click', () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set('reload', String(Date.now()));
+        window.location.assign(url.toString());
+    });
+
+    const logout = document.createElement('button');
+    logout.type = 'button';
+    logout.textContent = 'Sign out';
+    logout.style.cssText = reload.style.cssText;
+    logout.addEventListener('click', () => {
+        window.location.assign('/auth/logout');
+    });
+
+    actions.append(reload, logout);
+    panel.append(title, detail, actions);
+    overlay.appendChild(panel);
+}
+
 async function firstLoadInit() {
+    setStartupStage('first-load:start');
     console.debug('[init] firstLoadInit start');
     performance.mark('[init] start');
     installSettingsGetRequestInterceptor();
 
     try {
-        const tokenResponse = await fetch('/csrf-token');
+        setStartupStage('first-load:csrf-token');
+        const tokenResponse = await fetch('/csrf-token', { cache: 'no-store' });
+        if (!tokenResponse.ok) {
+            throw new Error(`CSRF token request failed (${tokenResponse.status})`);
+        }
         const tokenData = await tokenResponse.json();
         token = tokenData.token;
-    } catch {
+    } catch (error) {
         toastr.error(t`Couldn't get CSRF token. Please refresh the page.`, t`Error`, { timeOut: 0, extendedTimeOut: 0, preventDuplicates: true });
-        throw new Error('Initialization failed');
+        throw new Error(`Initialization failed: ${getStartupErrorMessage(error)}`);
     }
 
+    setStartupStage('first-load:loader');
     console.debug('[init] csrf-token done, showing loader');
     showLoader();
     const clientVersionPromise = getClientVersion();
+    setStartupStage('first-load:bootstrap-request');
     const bootstrapPromise = fetchBootstrapSnapshot();
     registerPromptManagerMigration();
     initDomHandlers();
@@ -1861,6 +1980,7 @@ async function firstLoadInit() {
     applyBrowserFixes();
     const clientVersionData = await clientVersionPromise;
     await initSecrets();
+    setStartupStage('first-load:bootstrap-response');
     console.debug('[init] fetching bootstrap snapshot...');
     const bootstrapSnapshot = await bootstrapPromise;
     console.debug('[init] bootstrap snapshot received');
@@ -1879,6 +1999,7 @@ async function firstLoadInit() {
     initKoboldSettings();
     initNovelAISettings();
     initSystemPrompts();
+    setStartupStage('first-load:settings');
     console.debug('[init] calling getSettings...');
     await getSettings({ bootstrap: true, payload: bootstrapSnapshot?.settings });
     console.debug('[init] getSettings done');
@@ -1900,6 +2021,7 @@ async function firstLoadInit() {
     }
     await fixViewport();
     await yieldToBrowser();
+    setStartupStage('first-load:presets');
     console.debug('[init] initPresetManager start');
     await initPresetManager();
     console.debug('[init] initPresetManager done');
@@ -1910,6 +2032,7 @@ async function firstLoadInit() {
         primeCharactersSnapshot(bootstrapSnapshot.characters);
     }
 
+    setStartupStage('first-load:batch1');
     console.debug('[init] startup tasks batch 1 start');
     await runStartupTasks([
         () => initTags(),
@@ -1931,6 +2054,7 @@ async function firstLoadInit() {
         await yieldToBrowser();
     }
 
+    setStartupStage('first-load:extensions');
     console.debug('[init] startup tasks batch 2 start (extensions)');
     await runStartupTasks([
         () => initTextGenModelSelects(),
@@ -1949,6 +2073,7 @@ async function firstLoadInit() {
     performance.mark('[init] batch2 done');
     await yieldToBrowser();
 
+    setStartupStage('first-load:batch3');
     console.debug('[init] startup tasks batch 3 start');
     await runStartupTasks([
         () => initWorldInfo(),
@@ -1972,6 +2097,7 @@ async function firstLoadInit() {
     ]);
     console.debug('[init] startup tasks batch 3 done');
     performance.mark('[init] batch3 done');
+    setStartupStage('first-load:app-ready');
     await eventSource.emit(event_types.APP_READY);
     console.debug('[init] firstLoadInit complete');
     performance.mark('[init] complete');
@@ -17541,31 +17667,17 @@ export async function swipe_right(event = null, { source, repeated, message } = 
  * @returns {Promise<void>}
  */
 export async function processDroppedFiles(files, data = new Map()) {
-    const allowedMimeTypes = [
-        'application/json',
-        'image/png',
-        'application/yaml',
-        'application/x-yaml',
-        'text/yaml',
-        'text/x-yaml',
-    ];
-
-    const allowedExtensions = [
-        'charx',
-        'byaf',
-    ];
-
     const avatarFileNames = [];
     for (const file of files) {
-        const extension = file.name.split('.').pop().toLowerCase();
-        if (allowedMimeTypes.some(x => file.type.startsWith(x)) || allowedExtensions.includes(extension)) {
+        const format = getCharacterImportFormat(file);
+        if (format) {
             const preservedName = data instanceof Map && data.get(file);
             const avatarFileName = await importCharacter(file, { preserveFileName: preservedName });
             if (avatarFileName !== undefined) {
                 avatarFileNames.push(avatarFileName);
             }
         } else {
-            toastr.warning(t`Unsupported file type: ` + file.name);
+            reportUnsupportedCharacterImportFile(file);
         }
     }
 
@@ -17601,6 +17713,47 @@ function selectImportedChar(charId) {
     select_rm_info('char_import_no_toast', charId, oldSelectedChar);
 }
 
+const characterImportFormats = new Set(['json', 'png', 'yaml', 'yml', 'charx', 'byaf']);
+const characterImportMimeFormats = new Map([
+    ['application/json', 'json'],
+    ['text/json', 'json'],
+    ['image/png', 'png'],
+    ['application/yaml', 'yaml'],
+    ['application/x-yaml', 'yaml'],
+    ['text/yaml', 'yaml'],
+    ['text/x-yaml', 'yaml'],
+]);
+
+/**
+ * Gets the character import format from a browser file.
+ * Some mobile browsers and Discord downloads provide a valid MIME type but no useful extension.
+ * @param {File} file File to inspect
+ * @returns {string}
+ */
+function getCharacterImportFormat(file) {
+    const extension = String(file?.name || '').match(/\.([^.]+)$/)?.[1]?.toLowerCase();
+    if (extension && characterImportFormats.has(extension)) {
+        return extension;
+    }
+
+    const mimeType = String(file?.type || '').toLowerCase();
+    if (characterImportMimeFormats.has(mimeType)) {
+        return characterImportMimeFormats.get(mimeType);
+    }
+
+    return '';
+}
+
+/**
+ * Reports an unsupported character import file without failing the rest of a multi-file import.
+ * @param {File} file File that could not be imported
+ */
+function reportUnsupportedCharacterImportFile(file) {
+    const fileName = file?.name || t`Unnamed file`;
+    console.warn('Unsupported character import file type', { name: file?.name, type: file?.type });
+    toastr.warning(t`Unsupported character file: ${fileName}. Supported formats: PNG, JSON, YAML, CHARX, BYAF.`);
+}
+
 /**
  * Imports a character from a file.
  * @param {File} file File to import
@@ -17616,14 +17769,14 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
         throw new Error('Cannot import character while generating');
     }
 
-    const ext = file.name.match(/\.(\w+)$/);
-    if (!ext || !(['json', 'png', 'yaml', 'yml', 'charx', 'byaf'].includes(ext[1].toLowerCase()))) {
+    const format = getCharacterImportFormat(file);
+    if (!format) {
+        reportUnsupportedCharacterImportFile(file);
         return;
     }
 
     const exists = preserveFileName ? characters.find(character => character.avatar === preserveFileName) : undefined;
 
-    const format = ext[1].toLowerCase();
     $('#character_import_file_type').val(format);
     const formData = new FormData();
     formData.append('avatar', file);
@@ -20819,7 +20972,14 @@ jQuery(async function () {
     });
 
     // Added here to prevent execution before script.js is loaded and get rid of quirky timeouts
-    await firstLoadInit();
+    try {
+        await firstLoadInit();
+        markAppReady();
+    } catch (error) {
+        console.error('Luker startup failed:', error);
+        await showStartupFailure(error, globalThis.__lorestageStartup?.stage || 'first-load');
+        return;
+    }
 
     window.addEventListener('beforeunload', (e) => {
         // Fire-and-forget: flush queues an IDB transaction synchronously,

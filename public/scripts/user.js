@@ -153,6 +153,8 @@ export async function setUserControls(isEnabled) {
         $('#logout_button').hide();
         $('#admin_button').show();
         $('#server_logs_button').show();
+        $('#debug-export-btn').show();
+        $('#request_inspector_button').show();
         return;
     }
 
@@ -200,8 +202,12 @@ async function getCurrentUser() {
         }
 
         currentUser = await response.json();
-        $('#admin_button').toggle(isAdmin());
-        $('#server_logs_button').show();
+        const userIsAdmin = isAdmin();
+        $('#admin_button').toggle(userIsAdmin);
+        $('#server_logs_button').toggle(userIsAdmin);
+        $('#debug-export-btn').toggle(userIsAdmin);
+        $('#request_inspector_button').toggle(userIsAdmin);
+        $(document).trigger('lorestage:user-profile', [currentUser]);
     } catch (error) {
         console.error('Error getting current user:', error);
     }

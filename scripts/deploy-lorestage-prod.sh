@@ -50,7 +50,7 @@ verify_logout_flow() {
     rm -f "${headers}"
     return 1
   fi
-  if ! grep -Eiq '^set-cookie:[[:space:]]*session-[^=]+=' "${headers}"; then
+  if ! grep -Eiq '^set-cookie:[[:space:]]*session-[^=]+=.*Max-Age=0' "${headers}"; then
     echo "Logout cookie check failed: /auth/logout must clear the Luker session cookie." >&2
     rm -f "${headers}"
     return 1
@@ -80,6 +80,8 @@ echo "==> Validating Luker"
 (
   cd "${LUKER_DIR}"
   node --check public/scripts/user.js
+  node --check public/scripts/request-inspector.js
+  node --check public/scripts/ws-fetch-proxy.js
   node --check src/util.js
   node --check src/users.js
   node --check src/endpoints/users-public.js

@@ -34,6 +34,8 @@
     const RECONNECT_BASE     = 1000;   // initial reconnect delay
     const RECONNECT_MAX      = 30000;  // max reconnect delay
     const RECONNECT_JITTER   = 0.3;    // ±30% jitter
+    const STARTUP_RECOVERY_TIMEOUT = 90000;
+    const STARTUP_RECOVERY_PARAM = 'lorestageRecovery';
 
     // ── State ───────────────────────────────────────────────────────
 
@@ -82,6 +84,79 @@
             return i18nApi.translate(text, text);
         }
         return text;
+    }
+
+    function createStartupRecoveryButton(text, onClick) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = text;
+        button.style.cssText = 'border:1px solid rgba(255,255,255,.3);border-radius:6px;background:#fff;color:#111;cursor:pointer;font:600 14px system-ui;padding:10px 14px;';
+        button.addEventListener('click', onClick);
+        return button;
+    }
+
+    function showStartupRecoveryPanel() {
+        if (typeof globalThis.__lorestageShowStartupFailure === 'function') {
+            globalThis.__lorestageShowStartupFailure('startup-recovery');
+            return;
+        }
+
+        const preloader = document.getElementById('preloader');
+        if (!preloader) {
+            return;
+        }
+
+        preloader.replaceChildren();
+        preloader.style.cssText = [
+            'align-items:center',
+            'background:#151516',
+            'box-sizing:border-box',
+            'color:#f4f4f5',
+            'display:flex',
+            'font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+            'inset:0',
+            'justify-content:center',
+            'padding:24px',
+            'position:fixed',
+            'z-index:999999',
+        ].join(';');
+
+        const panel = document.createElement('div');
+        panel.style.cssText = 'background:#242426;border:1px solid rgba(255,255,255,.14);border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.38);max-width:460px;padding:22px;width:100%;';
+
+        const title = document.createElement('h1');
+        title.textContent = 'Lorestage failed to load';
+        title.style.cssText = 'font-size:20px;line-height:1.3;margin:0 0 10px;';
+        const detail = document.createElement('p');
+        detail.textContent = 'This browser is stuck before app startup. Sign out once, then sign in again.';
+        detail.style.cssText = 'color:#d6d6da;font-size:14px;line-height:1.5;margin:0 0 16px;';
+        const actions = document.createElement('div');
+        actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;';
+        actions.append(
+            createStartupRecoveryButton('Sign out', () => window.location.assign('/auth/logout')),
+            createStartupRecoveryButton('Reload', () => {
+                const url = new URL(window.location.href);
+                url.searchParams.set(STARTUP_RECOVERY_PARAM, String(Date.now()));
+                window.location.assign(url.toString());
+            }),
+        );
+
+        panel.append(title, detail, actions);
+        preloader.appendChild(panel);
+    }
+
+    function installStartupRecoveryWatchdog() {
+        if (location.pathname.startsWith('/auth/')) {
+            return;
+        }
+
+        setTimeout(() => {
+            if (globalThis.__lorestageAppReady || !document.getElementById('preloader')) {
+                return;
+            }
+
+            showStartupRecoveryPanel();
+        }, STARTUP_RECOVERY_TIMEOUT);
     }
 
     // ── CSRF Token ──────────────────────────────────────────────────
@@ -474,6 +549,8 @@
     };
 
     // ── Bootstrap ──────────────────────────────────────────────────
+
+    installStartupRecoveryWatchdog();
 
     // Fetch CSRF token then connect
     fetchCsrfToken().then(connect);

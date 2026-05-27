@@ -38,6 +38,30 @@ const useShallowCharacters = isAndroid || !!getConfigValue('performance.lazyLoad
 const useDiskCache = !!getConfigValue('performance.useDiskCache', true, 'boolean');
 const CHARACTER_STATE_FILE_PREFIX = '.state.';
 const CHARACTER_STATE_FILE_SUFFIX = '.json';
+// Keep internal avatar filenames well below the common 255-byte filesystem
+// segment limit. write-file-atomic appends its own temporary suffix.
+const MAX_CHARACTER_INTERNAL_NAME_BYTES = 180;
+
+function truncateUtf8Bytes(value, maxBytes) {
+    let result = '';
+    let bytes = 0;
+
+    for (const char of String(value || '')) {
+        const charBytes = Buffer.byteLength(char);
+        if (bytes + charBytes > maxBytes) {
+            break;
+        }
+        result += char;
+        bytes += charBytes;
+    }
+
+    return result;
+}
+
+function normalizeCharacterInternalName(value) {
+    const sanitized = sanitize(String(value || '')).trim() || 'character';
+    return truncateUtf8Bytes(sanitized, MAX_CHARACTER_INTERNAL_NAME_BYTES).trim() || 'character';
+}
 
 class DiskCache {
     /**
@@ -1297,7 +1321,9 @@ router.post('/create', getFileNameValidationFunction('file_name'), async functio
         request.body.ch_name = sanitize(request.body.ch_name);
 
         const char = JSON.stringify(charaFormatData(request.body, request.user.directories));
-        const internalName = request.body.file_name || getPngName(request.body.ch_name, request.user.directories);
+        const internalName = request.body.file_name
+            ? getPngName(request.body.file_name, request.user.directories)
+            : getPngName(request.body.ch_name, request.user.directories);
         const avatarName = `${internalName}.png`;
         const chatsPath = path.join(request.user.directories.chats, internalName);
 
@@ -2140,12 +2166,15 @@ function getPngName(file, directories, options = {}) {
     };
 
     let i = 1;
-    const baseName = file;
-    while (internalNameExists(file)) {
-        file = baseName + i;
+    const baseName = normalizeCharacterInternalName(file);
+    let internalName = baseName;
+    while (internalNameExists(internalName)) {
+        const suffix = String(i);
+        const maxBaseBytes = Math.max(1, MAX_CHARACTER_INTERNAL_NAME_BYTES - Buffer.byteLength(suffix));
+        internalName = `${truncateUtf8Bytes(baseName, maxBaseBytes).trim()}${suffix}`;
         i++;
     }
-    return file;
+    return internalName;
 }
 
 function normalizeCharacterStateNamespace(namespace) {
@@ -2220,7 +2249,7 @@ function deleteAllCharacterStateSidecars(characterFilePath) {
  */
 function getPreservedName(request) {
     return typeof request.body.preserved_name === 'string' && request.body.preserved_name.length > 0
-        ? path.parse(request.body.preserved_name).name
+        ? normalizeCharacterInternalName(path.parse(request.body.preserved_name).name)
         : undefined;
 }
 
@@ -2299,15 +2328,10 @@ router.post('/duplicate', validateAvatarUrlMiddleware, async function (request, 
         const baseName = !isNaN(Number(lastPart)) && nameParts.length > 1
             ? nameParts.slice(0, -1).join('_')
             : nameParts.join('_');
-        let suffix = !isNaN(Number(lastPart)) && nameParts.length > 1
+        const suffix = !isNaN(Number(lastPart)) && nameParts.length > 1
             ? parseInt(lastPart) + 1
             : 1;
-        let duplicateBaseName = `${baseName}_${suffix}`;
-
-        while (getPngName(duplicateBaseName, request.user.directories) !== duplicateBaseName) {
-            suffix++;
-            duplicateBaseName = `${baseName}_${suffix}`;
-        }
+        const duplicateBaseName = getPngName(`${baseName}_${suffix}`, request.user.directories);
 
         const newFilename = path.join(request.user.directories.characters, `${duplicateBaseName}${ext}`);
 

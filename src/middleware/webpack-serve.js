@@ -3,6 +3,12 @@ import path from 'node:path';
 import webpack from 'webpack';
 import getPublicLibConfig from '../../webpack.config.js';
 
+function setFrontendNoStoreHeaders(response) {
+    response.setHeader('Cache-Control', 'no-cache, max-age=0, must-revalidate');
+    response.setHeader('CDN-Cache-Control', 'no-store');
+    response.setHeader('Cloudflare-CDN-Cache-Control', 'no-store');
+}
+
 export default function getWebpackServeMiddleware() {
     /**
      * A very spartan recreation of webpack-dev-middleware.
@@ -22,6 +28,7 @@ export default function getWebpackServeMiddleware() {
             : null;
 
         if (req.method === 'GET' && parsedPath.dir === '/' && outputFiles.has(requestedFile) && requestedPath && fs.existsSync(requestedPath)) {
+            setFrontendNoStoreHeaders(res);
             return res.sendFile(requestedFile, { root: outputPath });
         }
 

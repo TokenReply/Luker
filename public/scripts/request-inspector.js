@@ -617,7 +617,7 @@ async function openInspectorPanel() {
 
 jQuery(() => {
  const $btn = $(`
- <div id="request_inspector_button" class="margin0 menu_button_icon menu_button">
+ <div id="request_inspector_button" class="margin0 menu_button_icon menu_button" style="display:none;">
  <i class="fa-fw fa-solid fa-satellite-dish"></i>
  <span data-i18n="Inspector">Inspector</span>
  </div>
@@ -631,4 +631,8 @@ jQuery(() => {
  } else {
  $('#account_controls').append($btn);
  }
+
+ $(document).on('lorestage:user-profile', (_event, user) => {
+ $btn.toggle(Boolean(user?.admin));
+ });
 });

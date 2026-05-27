@@ -309,6 +309,12 @@ if (!cliArgs.disableCsrf) {
 }
 
 // Static files
+function setFrontendNoStoreHeaders(response) {
+    response.setHeader('Cache-Control', 'no-cache, max-age=0, must-revalidate');
+    response.setHeader('CDN-Cache-Control', 'no-store');
+    response.setHeader('Cloudflare-CDN-Cache-Control', 'no-store');
+}
+
 // Host index page
 app.get('/', cacheBuster.middleware, (request, response) => {
     if (shouldRedirectToLogin(request)) {
@@ -317,6 +323,7 @@ app.get('/', cacheBuster.middleware, (request, response) => {
         return response.redirect(redirectUrl);
     }
 
+    setFrontendNoStoreHeaders(response);
     return response.sendFile('index.html', { root: path.join(serverDirectory, 'public') });
 });
 
@@ -338,7 +345,13 @@ app.get('/login', loginPageMiddleware);
 const webpackMiddleware = getWebpackServeMiddleware();
 app.use(webpackMiddleware);
 app.use(userCssMiddleware);
-app.use(express.static(path.join(serverDirectory, 'public'), {}));
+app.use(express.static(path.join(serverDirectory, 'public'), {
+    setHeaders: (response, filePath) => {
+        if (/\.(?:css|html|js|json|mjs)$/i.test(filePath)) {
+            setFrontendNoStoreHeaders(response);
+        }
+    },
+}));
 
 // Public API
 app.use('/api/users', usersPublicRouter);

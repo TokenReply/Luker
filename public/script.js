@@ -297,7 +297,7 @@ import { initBulkEdit } from './scripts/bulk-edit.js';
 import { getContext } from './scripts/st-context.js';
 import { extractReasoningFromData, extractReasoningSignatureFromData, initReasoning, parseReasoningInSwipes, PromptReasoning, ReasoningHandler, registerReasoningSlashCommands, removeReasoningFromString, updateReasoningUI } from './scripts/reasoning.js';
 import { accountStorage } from './scripts/util/AccountStorage.js';
-import { fetchRecentChatsSnapshot, initWelcomeScreen, openPermanentAssistantChat, openPermanentAssistantCard, getPermanentAssistantAvatar, openWelcomeScreen, primeRecentChatsSnapshotPromise } from './scripts/welcome-screen.js';
+import { fetchRecentChatsSnapshot, initWelcomeScreen, openPermanentAssistantChat, openPermanentAssistantCard, getPermanentAssistantAvatar, openWelcomeScreen, primeRecentChatsSnapshotPromise } from './scripts/welcome-screen.js?v=20260528-clickfix';
 import { initDataMaid } from './scripts/data-maid.js';
 import { clearItemizedPrompts, deleteItemizedPromptForMessage, deleteItemizedPrompts, findItemizedPromptSet, flushItemizedPromptsSave, initItemizedPrompts, itemizedParams, itemizedPrompts, loadItemizedPrompts, promptItemize, replaceItemizedPromptText, saveItemizedPrompts, saveItemizedPromptsDebounced, swapItemizedPrompts } from './scripts/itemized-prompts.js';
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
@@ -18521,12 +18521,19 @@ export async function newAssistantChat({ temporary = false } = {}) {
  * Event handler to open a navbar drawer when a drawer open button is clicked.
  * Handles click events on .drawer-opener elements.
  * Opens the drawer associated with the clicked button according to the data-target attribute.
+ * @param {Event|JQuery.ClickEvent} [event] Click event
  * @returns {void}
  */
-function doDrawerOpenClick() {
+function doDrawerOpenClick(event) {
+    event?.preventDefault?.();
+
     const targetDrawerID = $(this).attr('data-target');
     const drawer = $(`#${targetDrawerID}`);
-    const drawerToggle = drawer.find('.drawer-toggle');
+    const drawerToggle = drawer.find('>.drawer-toggle').first();
+    if (!drawer.length || !drawerToggle.length) {
+        return;
+    }
+
     const drawerWasOpenAlready = drawerToggle.parent().find('.drawer-content').hasClass('openDrawer');
     if (drawerWasOpenAlready || drawer.hasClass('resizing')) { return; }
     doNavbarIconClick.call(drawerToggle);
@@ -20625,11 +20632,11 @@ jQuery(async function () {
         stopScriptExecution();
     });
 
-    $(document).on('click', '.drawer-opener', doDrawerOpenClick);
+    $(document).off('click.drawerOpener', '.drawer-opener').on('click.drawerOpener', '.drawer-opener', doDrawerOpenClick);
 
-    $('.drawer-toggle').on('click', doNavbarIconClick);
+    $('.drawer-toggle').off('click.drawerToggle').on('click.drawerToggle', doNavbarIconClick);
 
-    $('html').on('touchstart mousedown', async function (e) {
+    $('html').off('touchstart.drawerAutoClose mousedown.drawerAutoClose').on('touchstart.drawerAutoClose mousedown.drawerAutoClose', async function (e) {
         const clickTarget = $(e.target);
 
         if (isExportPopupOpen

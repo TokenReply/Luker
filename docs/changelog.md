@@ -23,6 +23,7 @@
 
 #### Smoothness and recovery improvements
 
+- Fixed duplicate welcome shortcut buttons and made drawer shortcut clicks idempotent so refreshed/mobile sessions do not lose the API, character management, or extensions button actions. The welcome screen module is consistently versioned for this hotfix so mobile browsers do not keep the stale duplicate-button code.
 - Reduced forced cache clearing: empty `cacheBuster.userAgentPattern` no longer clears every user's browser cache, and live cache-busting is disabled.
 - Changed frontend static asset headers from no-store to short public caching, while keeping the HTML shell non-stale.
 - Added version query strings to the HTML shell's regular CSS/JS entrypoints while keeping shared ES module imports unqueried to avoid duplicate module instances.

@@ -363,6 +363,16 @@ function sendAssistantMessage() {
 }
 
 function sendWelcomePrompt() {
+    const hasWelcomeShortcutButtons = Boolean(
+        document.querySelector('#chat .drawer-opener[data-target="sys-settings-button"]')
+        && document.querySelector('#chat .drawer-opener[data-target="rightNavHolder"]')
+        && document.querySelector('#chat .drawer-opener[data-target="extensions-settings-button"]'),
+    );
+    const hasWelcomePromptMessage = chat.some(message => message?.extra?.type === system_message_types.WELCOME_PROMPT);
+    if (hasWelcomeShortcutButtons || hasWelcomePromptMessage) {
+        return;
+    }
+
     const message = getSystemMessageByType(system_message_types.WELCOME_PROMPT);
     if (!message) {
         eventSource.once(event_types.APP_READY, () => {
@@ -374,6 +384,10 @@ function sendWelcomePrompt() {
         return;
     }
 
+    message.extra = {
+        ...message.extra,
+        type: system_message_types.WELCOME_PROMPT,
+    };
     chat.push(message);
     addOneMessage(message, { scroll: false });
 }

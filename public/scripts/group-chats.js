@@ -2520,7 +2520,7 @@ async function deleteGroupChatInternal(groupId, chatId, { jumpToNewChat = true }
             }
 
             if (document.querySelector('#chat .welcomePanel')) {
-                const welcomeScreen = await import('./welcome-screen.js');
+                const welcomeScreen = await import('./welcome-screen.js?v=20260528-clickfix');
                 await welcomeScreen.openWelcomeScreen({ force: true });
             }
         },

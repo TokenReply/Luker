@@ -2759,14 +2759,19 @@ async function openAdminPanel() {
  */
 async function logout() {
     const centralLogoutUrl = document.getElementById('lorestage_logout_link')?.getAttribute('href');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1500);
 
     try {
         await fetch('/api/users/logout', {
             method: 'POST',
             headers: getRequestHeaders({ omitContentType: true }),
+            signal: controller.signal,
         });
     } catch (error) {
         console.warn('Failed to clear local session before logout', error);
+    } finally {
+        clearTimeout(timeout);
     }
 
     if (centralLogoutUrl) {

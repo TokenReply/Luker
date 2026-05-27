@@ -4,7 +4,7 @@ const SELF_PROFILING_STORAGE_KEY = 'luker.selfProfilingEnabled';
 const SELF_PROFILING_SAMPLE_INTERVAL = 10;
 const SELF_PROFILING_MAX_BUFFER_SIZE = 50000;
 const SELF_PROFILING_STATE_KEY = '__lukerSelfProfilerState';
-const LORESTAGE_BUILD_ID = '20260527-noauth2';
+const LORESTAGE_BUILD_ID = '20260528-import-filter';
 
 function getStartupState() {
     try {

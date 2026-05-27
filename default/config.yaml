@@ -126,6 +126,14 @@ sso:
   # as that used for authlia. (Ensure the username in authlia
   # is an exact match in lowercase with that in sillytavern)
   autheliaAuth: false
+  # Enables trusted-header login from a reverse-proxy forward-auth service
+  # that sends X-Authentik-Username. Lorestage production uses this for the
+  # lorestage-auth email/password login service.
+  authentikAuth: false
+  # Optional shared secret required with trusted SSO headers. Leave empty only
+  # when the upstream app is bound to localhost and all SSO headers are stripped
+  # before the reverse proxy injects them.
+  sharedSecret: ""
   # List of trusted proxy IPs for SSO authentication.
   # Supports wildcards or CIDR notation for subnets.
   # Example: ['127.0.0.1', '192.168.1.1']

@@ -4,6 +4,23 @@
 
 ## Current version
 
+### 2026-05-28 live hotfixes
+
+#### Email auth restoration
+
+- Restored the production `lorestage-auth` email/password login path at `/auth/*` and `/api/auth/*`; `/login` now redirects to `/auth/login` instead of showing the local Luker login page.
+- Re-enabled Luker's trusted `X-Authentik-Username` SSO auto-login behind Caddy, guarded by localhost trusted proxies and the shared SSO secret.
+- Restored the live `sso.authentikAuth`/`sso.sharedSecret` configuration and enabled Cloudflare real-IP forwarding for login rate limiting.
+- Verified unauthenticated users are sent to `/auth/login`, authenticated forward-auth sessions reach the app, forged public `X-Authentik-Username` requests do not bypass auth, and `/auth/logout` clears both auth and Luker cookies.
+- Re-added the `authentikAuth` and `sharedSecret` default config keys so the production auth bridge is documented instead of treated as dead code.
+
+#### Character card import visibility
+
+- Fixed a case where character card import succeeded on the backend but looked like “nothing happened” in the UI because the current character list filters hid the new card.
+- After import/create, the character list now falls back to the unfiltered entity list, clears search/favorite/group/folder/tag filters that hide the new card, re-renders the list, and highlights the imported card.
+- If the imported card is hidden by an assigned closed-folder tag, the frontend selects that folder so the new card is visible immediately.
+- Bumped the frontend build ID again so mobile browsers fetch the import visibility fix.
+
 ### 2026-05-27 live hotfixes
 
 #### Authentication, logout, and privacy isolation

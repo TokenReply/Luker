@@ -223,6 +223,7 @@ import {
     renameTagKey,
     importTags,
     tag_filter_type,
+    TAG_FOLDER_TYPES,
     compareTagsForSort,
     initTags,
     applyTagsOnCharacterSelect,
@@ -15563,16 +15564,33 @@ export function select_rm_info(type, charId, previousCharId = null) {
 
     // Set a timeout so multiple flashes don't overlap
     clearTimeout(importFlashTimeout);
-    importFlashTimeout = setTimeout(function () {
+    importFlashTimeout = setTimeout(async function () {
         if (type === 'char_import' || type === 'char_create' || type === 'char_import_no_toast') {
             // Find the page at which the character is located
             const avatarFileName = charId;
-            const charData = getEntitiesList({ doFilter: true });
-            const charIndex = charData.findIndex((x) => x?.item?.avatar?.startsWith(avatarFileName));
+            let charData = getEntitiesList({ doFilter: true });
+            let charIndex = findCharacterEntityIndexByAvatar(charData, avatarFileName);
 
             if (charIndex === -1) {
-                console.log(`Could not find character ${charId} in the list`);
-                return;
+                const unfilteredCharData = getEntitiesList({ doFilter: false });
+                const unfilteredCharIndex = findCharacterEntityIndexByAvatar(unfilteredCharData, avatarFileName);
+
+                if (unfilteredCharIndex !== -1 && clearCharacterListFiltersForImport()) {
+                    await printCharacters(true);
+                    charData = getEntitiesList({ doFilter: true });
+                    charIndex = findCharacterEntityIndexByAvatar(charData, avatarFileName);
+                }
+
+                if (charIndex === -1 && unfilteredCharIndex !== -1 && selectImportedCharacterClosedFolder(avatarFileName)) {
+                    await printCharacters(true);
+                    charData = getEntitiesList({ doFilter: true });
+                    charIndex = findCharacterEntityIndexByAvatar(charData, avatarFileName);
+                }
+
+                if (charIndex === -1) {
+                    console.log(`Could not find character ${charId} in the list`);
+                    return;
+                }
             }
 
             try {
@@ -15631,6 +15649,97 @@ export function select_rm_info(type, charId, previousCharId = null) {
             setCharacterId(newId);
         }
     }
+}
+
+/**
+ * Finds a character display entity by avatar filename or internal name.
+ * @param {Entity[]} entities Character/group/tag display entities
+ * @param {string} avatarFileName Character avatar filename or internal name
+ * @returns {number} Index of the matching entity, or -1
+ */
+function findCharacterEntityIndexByAvatar(entities, avatarFileName) {
+    const avatarId = String(avatarFileName || '');
+    const avatarWithExtension = avatarId.endsWith('.png') ? avatarId : `${avatarId}.png`;
+    return entities.findIndex((x) => {
+        const avatar = String(x?.item?.avatar || '');
+        return avatar === avatarId || avatar === avatarWithExtension || avatar.startsWith(avatarId);
+    });
+}
+
+/**
+ * Clears character list filters that can hide a newly imported character.
+ * @returns {boolean} True when filters were changed
+ */
+function clearCharacterListFiltersForImport() {
+    const undefinedState = FILTER_STATES.UNDEFINED.key;
+    let changed = false;
+
+    const setFilterData = (filterType, value) => {
+        if (JSON.stringify(entitiesFilter.getFilterData(filterType)) !== JSON.stringify(value)) {
+            entitiesFilter.setFilterData(filterType, value, true);
+            changed = true;
+        }
+    };
+
+    if (String($('#character_search_bar').val() || '') !== '') {
+        $('#character_search_bar').val('');
+        changed = true;
+    }
+
+    setFilterData(FILTER_TYPES.SEARCH, '');
+    setFilterData(FILTER_TYPES.FAV, undefinedState);
+    setFilterData(FILTER_TYPES.GROUP, undefinedState);
+    setFilterData(FILTER_TYPES.FOLDER, undefinedState);
+    setFilterData(FILTER_TYPES.TAG, { selected: [], excluded: [] });
+
+    for (const [filterType, storageKey] of [
+        [FILTER_TYPES.FAV, 'TagFilterState_FAV'],
+        [FILTER_TYPES.GROUP, 'TagFilterState_GROUP'],
+        [FILTER_TYPES.FOLDER, 'TagFilterState_FOLDER'],
+    ]) {
+        accountStorage.setItem(`CharacterList_${storageKey}`, entitiesFilter.getFilterData(filterType));
+    }
+
+    for (const tag of tags) {
+        if (!tag?.id) {
+            continue;
+        }
+
+        accountStorage.setItem(`CharacterList_tag_${tag.id}`, undefinedState);
+        if ('filter_state' in tag && !isFilterState(tag.filter_state, FILTER_STATES.UNDEFINED)) {
+            tag.filter_state = undefinedState;
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        saveSettingsDebounced();
+    }
+
+    return changed;
+}
+
+/**
+ * Selects a closed folder tag that contains the imported character.
+ * @param {string} avatarFileName Character avatar filename or internal name
+ * @returns {boolean} True when a containing closed folder was selected
+ */
+function selectImportedCharacterClosedFolder(avatarFileName) {
+    const avatarId = String(avatarFileName || '');
+    const avatarWithExtension = avatarId.endsWith('.png') ? avatarId : `${avatarId}.png`;
+    const assignedTagIds = new Set([
+        ...(Array.isArray(tag_map[avatarId]) ? tag_map[avatarId] : []),
+        ...(Array.isArray(tag_map[avatarWithExtension]) ? tag_map[avatarWithExtension] : []),
+    ]);
+
+    const folder = tags.find(tag => assignedTagIds.has(tag.id) && TAG_FOLDER_TYPES[tag.folder_type] === TAG_FOLDER_TYPES.CLOSED);
+    if (!folder) {
+        return false;
+    }
+
+    entitiesFilter.setFilterData(FILTER_TYPES.TAG, { selected: [folder.id], excluded: [] }, true);
+    accountStorage.setItem(`CharacterList_tag_${folder.id}`, FILTER_STATES.SELECTED.key);
+    return true;
 }
 
 /**

@@ -57,9 +57,10 @@ class CacheBuster {
         // Check if the user agent matches the configured pattern
         const userAgent = request.headers['user-agent'] || '';
 
-        // Bust cache for all requests if no pattern is set
+        // Empty patterns used to clear every user's cache on first visit after
+        // each restart. Keep cache busting opt-in to specific problematic UAs.
         if (!this.#userAgentRegex) {
-            return true;
+            return false;
         }
 
         return this.#userAgentRegex.test(userAgent);

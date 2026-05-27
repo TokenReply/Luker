@@ -69,8 +69,6 @@ export { MODULE_NAME };
 const MODULE_NAME = 'sd';
 // This is a 1x1 transparent PNG
 const PNG_PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
-const CUSTOM_STOP_EVENT = 'sd_stop_generation';
-
 // Generation tracking for status indicator
 let activeGenerations = 0;
 /** @type {JQuery<HTMLElement>|null} */
@@ -295,9 +293,6 @@ const defaultSettings = {
     // AUTOMATIC1111 settings
     auto_url: 'http://localhost:7860',
     auto_auth: '',
-    sdcpp_url: 'http://127.0.0.1:1234',
-
-    // stable-diffusion.cpp settings
     sdcpp_url: 'http://127.0.0.1:1234',
 
     vlad_url: 'http://localhost:7860',
@@ -618,7 +613,63 @@ function getClosestKnownResolution() {
     return resolutionId;
 }
 
-async function loadSettingOptions() {
+function isLocalHostname(hostname) {
+    return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(String(hostname || '').toLowerCase());
+}
+
+function isLocalSdEndpoint(url) {
+    try {
+        return isLocalHostname(new URL(String(url || '')).hostname);
+    } catch {
+        return false;
+    }
+}
+
+function shouldDeferLocalSdOptionLoad() {
+    if (isLocalHostname(window.location.hostname)) {
+        return false;
+    }
+
+    switch (extension_settings.sd.source) {
+        case sources.auto:
+            return isLocalSdEndpoint(extension_settings.sd.auto_url);
+        case sources.vlad:
+            return isLocalSdEndpoint(extension_settings.sd.vlad_url);
+        case sources.drawthings:
+            return isLocalSdEndpoint(extension_settings.sd.drawthings_url);
+        case sources.sdcpp:
+            return isLocalSdEndpoint(extension_settings.sd.sdcpp_url);
+        default:
+            return false;
+    }
+}
+
+function setDeferredSdSelect(selector, value) {
+    const optionValue = value || 'N/A';
+    const select = $(selector);
+    select.empty();
+    const option = document.createElement('option');
+    option.innerText = optionValue;
+    option.value = optionValue;
+    option.selected = true;
+    select.append(option);
+}
+
+function loadDeferredSdSettingOptions() {
+    setDeferredSdSelect('#sd_sampler', extension_settings.sd.sampler || 'N/A');
+    setDeferredSdSelect('#sd_model', extension_settings.sd.model || 'N/A');
+    setDeferredSdSelect('#sd_scheduler', extension_settings.sd.scheduler || 'N/A');
+    setDeferredSdSelect('#sd_vae', extension_settings.sd.vae || placeholderVae);
+    setDeferredSdSelect('#sd_comfy_workflow', extension_settings.sd.comfy_workflow || 'N/A');
+    console.debug('SD: deferred local endpoint option loading until the image backend is validated or used.');
+}
+
+async function loadSettingOptions({ force = false } = {}) {
+    if (!force && shouldDeferLocalSdOptionLoad()) {
+        loadDeferredSdSettingOptions();
+        return [];
+    }
+
     return Promise.all([
         loadSamplers(),
         loadModels(),
@@ -1373,7 +1424,7 @@ async function validateAutoUrl() {
             throw new Error('SD WebUI returned an error.');
         }
 
-        await loadSettingOptions();
+        await loadSettingOptions({ force: true });
         toastr.success('SD WebUI API connected.');
     } catch (error) {
         toastr.error(`Could not validate SD WebUI API: ${error.message}`);
@@ -1396,7 +1447,7 @@ async function validateSdcppUrl() {
             throw new Error('stable-diffusion.cpp server returned an error.');
         }
 
-        await loadSettingOptions();
+        await loadSettingOptions({ force: true });
         toastr.success('stable-diffusion.cpp server connected.');
     } catch (error) {
         toastr.error(`Could not validate stable-diffusion.cpp server: ${error.message}`);
@@ -1419,7 +1470,7 @@ async function validateDrawthingsUrl() {
             throw new Error('SD Drawthings returned an error.');
         }
 
-        await loadSettingOptions();
+        await loadSettingOptions({ force: true });
         toastr.success('SD Drawthings API connected.');
     } catch (error) {
         toastr.error(`Could not validate SD Drawthings API: ${error.message}`);
@@ -1442,7 +1493,7 @@ async function validateVladUrl() {
             throw new Error('SD.Next returned an error.');
         }
 
-        await loadSettingOptions();
+        await loadSettingOptions({ force: true });
         toastr.success('SD.Next API connected.');
     } catch (error) {
         toastr.error(`Could not validate SD.Next API: ${error.message}`);
@@ -1466,7 +1517,7 @@ async function validateComfyUrl() {
             throw new Error('ComfyUI returned an error.');
         }
 
-        await loadSettingOptions();
+        await loadSettingOptions({ force: true });
         toastr.success('ComfyUI API connected.');
     } catch (error) {
         toastr.error(`Could not validate ComfyUI API: ${error.message}`);
@@ -1490,7 +1541,7 @@ async function validateComfyRunPodUrl() {
             throw new Error('ComfyUI RunPod returned an error.');
         }
 
-        await loadSettingOptions();
+        await loadSettingOptions({ force: true });
         toastr.success('ComfyUI RunPod API connected.');
     } catch (error) {
         toastr.error(`Could not validate ComfyUI RunPod API: ${error.message}`);
@@ -5317,7 +5368,6 @@ async function writePromptFields(characterId) {
  */
 async function generateMediaSwipe(mediaAttachment, message, onStart, onComplete, abortController = new AbortController()) {
     const stopButton = document.getElementById('sd_stop_gen');
-    const stopListener = () => abortController.abort('Aborted by user');
     const generationType = mediaAttachment.generation_type ?? message?.extra?.generationType ?? generationMode.FREE;
     let dimensions = { width: extension_settings.sd.width, height: extension_settings.sd.height };
     extension_settings.sd.original_seed = extension_settings.sd.seed;

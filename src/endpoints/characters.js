@@ -2309,8 +2309,46 @@ function getPreservedName(request) {
         : undefined;
 }
 
+function sendCharacterImportError(response, status, code, message, details = undefined) {
+    if (response.headersSent) {
+        return;
+    }
+
+    return response.status(status).json({
+        error: message,
+        code,
+        message,
+        ...(details ? { details } : {}),
+    });
+}
+
+function getCharacterImportError(error, format) {
+    const rawMessage = error instanceof Error ? error.message : String(error || '');
+    const message = rawMessage || 'Unexpected import error';
+
+    if (/unsupported format/i.test(message)) {
+        return { status: 415, code: 'UNSUPPORTED_FORMAT', message: `Unsupported character format: ${format || 'unknown'}.` };
+    }
+
+    if (/unexpected token|json/i.test(message) && ['json', 'png', 'charx', 'byaf'].includes(String(format))) {
+        return { status: 400, code: 'INVALID_CHARACTER_DATA', message: 'Character metadata could not be parsed.' };
+    }
+
+    if (/failed to read character data|invalid character/i.test(message)) {
+        return { status: 400, code: 'INVALID_CHARACTER_DATA', message: 'The uploaded file does not contain readable character data.' };
+    }
+
+    if (/quota|too large|file too large|entity too large/i.test(message)) {
+        return { status: 413, code: 'IMPORT_TOO_LARGE', message: 'The uploaded character file is too large.' };
+    }
+
+    return { status: 400, code: 'IMPORT_FAILED', message: 'Character import failed. Please verify the file and try again.', details: message };
+}
+
 router.post('/import', async function (request, response) {
-    if (!request.body || !request.file) return response.sendStatus(400);
+    if (!request.body || !request.file) {
+        return sendCharacterImportError(response, 400, 'MISSING_FILE', 'No character file was uploaded.');
+    }
 
     const uploadPath = path.join(request.file.destination, request.file.filename);
     const format = request.body.file_type;
@@ -2329,14 +2367,14 @@ router.post('/import', async function (request, response) {
         const importFunction = formatImportFunctions[format];
 
         if (!importFunction) {
-            throw new Error(`Unsupported format: ${format}`);
+            return sendCharacterImportError(response, 415, 'UNSUPPORTED_FORMAT', `Unsupported character format: ${format || 'unknown'}.`);
         }
 
         const fileName = await importFunction(uploadPath, { request, response }, preservedFileName);
 
         if (!fileName) {
             console.warn('Failed to import character');
-            return response.sendStatus(400);
+            return sendCharacterImportError(response, 400, 'INVALID_CHARACTER_DATA', 'The uploaded file does not contain readable character data.');
         }
 
         if (preservedFileName) {
@@ -2359,10 +2397,11 @@ router.post('/import', async function (request, response) {
             console.warn('[card-app] Failed to extract CardApp files during import:', cardAppErr);
         }
 
-        response.send({ file_name: fileName });
+        return response.send({ file_name: fileName });
     } catch (err) {
         console.error(err);
-        response.send({ error: true });
+        const importError = getCharacterImportError(err, format);
+        return sendCharacterImportError(response, importError.status, importError.code, importError.message, importError.details);
     }
 });
 

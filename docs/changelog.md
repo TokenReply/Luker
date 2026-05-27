@@ -21,6 +21,18 @@
 - If the imported card is hidden by an assigned closed-folder tag, the frontend selects that folder so the new card is visible immediately.
 - Bumped the frontend build ID again so mobile browsers fetch the import visibility fix.
 
+#### Smoothness and recovery improvements
+
+- Reduced forced cache clearing: empty `cacheBuster.userAgentPattern` no longer clears every user's browser cache, and live cache-busting is disabled.
+- Changed frontend static asset headers from no-store to short public caching, while keeping the HTML shell non-stale.
+- Added version query strings to the HTML shell's regular CSS/JS entrypoints while keeping shared ES module imports unqueried to avoid duplicate module instances.
+- Deferred Stable Diffusion option discovery when production is pointed at default local endpoints such as `localhost:7860`, preventing startup-time 500s when no SD backend is configured.
+- Added a one-time CSRF token refresh and retry for same-origin mutating fetches, with a clear session-expired toast if retry still fails.
+- Improved character import errors so unsupported/invalid/oversized files return structured HTTP errors and the UI shows the actual reason instead of a generic corruption message.
+- Hardened local account recovery responses so the first recovery step no longer reveals whether a username exists.
+- Fixed `/login` for an already-authenticated Luker request to redirect into the app instead of returning a 403.
+- Marked first-run onboarding as a distinct startup stage and adjusted mobile onboarding layout so small screens keep the Save action reachable without false startup timeout overlays.
+
 ### 2026-05-27 live hotfixes
 
 #### Authentication, logout, and privacy isolation

@@ -668,14 +668,9 @@ router.post('/recover-step1', async (request, response) => {
         /** @type {import('../users.js').User} */
         const user = await storage.getItem(toKey(request.body.handle));
 
-        if (!user) {
-            console.error('Recover step 1 failed: User', request.body.handle, 'not found');
-            return response.status(404).json({ error: 'User not found' });
-        }
-
-        if (!user.enabled) {
-            console.error('Recover step 1 failed: User', user.handle, 'is disabled');
-            return response.status(403).json({ error: 'User is disabled' });
+        if (!user || !user.enabled) {
+            console.warn('Recover step 1 ignored for unavailable account');
+            return response.sendStatus(204);
         }
 
         const mfaCode = generateRecoveryCode();
@@ -715,14 +710,10 @@ router.post('/recover-step2', async (request, response) => {
             throw rateLimit;
         }
 
-        if (!user) {
-            console.error('Recover step 2 failed: User', request.body.handle, 'not found');
-            return response.status(404).json({ error: 'User not found' });
-        }
-
-        if (!user.enabled) {
-            console.warn('Recover step 2 failed: User', user.handle, 'is disabled');
-            return response.status(403).json({ error: 'User is disabled' });
+        if (!user || !user.enabled) {
+            await recoverLimiter.consume(ip);
+            console.warn('Recover step 2 failed: Incorrect code');
+            return response.status(403).json({ error: 'Incorrect code' });
         }
 
         const mfaCode = MFA_CACHE.get(user.handle);

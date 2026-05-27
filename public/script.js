@@ -1732,6 +1732,107 @@ export function getRequestHeaders({ omitContentType = false } = {}) {
     return headers;
 }
 
+let csrfFetchRetryInstalled = false;
+let csrfTokenRefreshPromise = null;
+
+function getRequestUrlPath(input) {
+    try {
+        const requestUrl = input instanceof Request ? input.url : String(input);
+        return new URL(requestUrl, window.location.origin).pathname;
+    } catch {
+        return '';
+    }
+}
+
+function getRequestMethod(input, init = {}) {
+    return String(init?.method || (input instanceof Request ? input.method : 'GET') || 'GET').toUpperCase();
+}
+
+async function refreshCsrfToken(baseFetch) {
+    if (!csrfTokenRefreshPromise) {
+        csrfTokenRefreshPromise = (async () => {
+            const response = await baseFetch('/csrf-token', { cache: 'no-store' });
+            if (!response.ok) {
+                throw new Error(`CSRF token refresh failed (${response.status})`);
+            }
+            const data = await response.json();
+            token = data.token;
+            return token;
+        })().finally(() => {
+            csrfTokenRefreshPromise = null;
+        });
+    }
+
+    return csrfTokenRefreshPromise;
+}
+
+async function isInvalidCsrfResponse(response) {
+    if (response.status !== 403) {
+        return false;
+    }
+
+    try {
+        const text = await response.clone().text();
+        return /invalid csrf|csrf token/i.test(text);
+    } catch {
+        return false;
+    }
+}
+
+function withFreshCsrfHeader(input, init = {}) {
+    if (input instanceof Request) {
+        const headers = new Headers(input.headers);
+        headers.set('X-CSRF-Token', token);
+        return [new Request(input, { headers }), init];
+    }
+
+    const headers = new Headers(init?.headers || {});
+    headers.set('X-CSRF-Token', token);
+    return [input, { ...init, headers }];
+}
+
+function cloneFetchArgs(input, init) {
+    if (input instanceof Request) {
+        return [input.clone(), init ? { ...init } : init];
+    }
+
+    return [input, init ? { ...init } : init];
+}
+
+function installCsrfFetchRetry() {
+    if (csrfFetchRetryInstalled || typeof window.fetch !== 'function') {
+        return;
+    }
+
+    const baseFetch = window.fetch.bind(window);
+    window.fetch = async function csrfRetryFetch(input, init) {
+        const path = getRequestUrlPath(input);
+        const method = getRequestMethod(input, init);
+
+        if (path === '/csrf-token' || method === 'GET' || method === 'HEAD') {
+            return await baseFetch(input, init);
+        }
+
+        const [initialInput, initialInit] = cloneFetchArgs(input, init);
+        const response = await baseFetch(initialInput, initialInit);
+        if (!await isInvalidCsrfResponse(response)) {
+            return response;
+        }
+
+        console.warn('CSRF token expired; refreshing and retrying request once.', { path });
+        await refreshCsrfToken(baseFetch);
+        const [retryInput, retryInit] = withFreshCsrfHeader(...cloneFetchArgs(input, init));
+        const retryResponse = await baseFetch(retryInput, retryInit);
+
+        if (await isInvalidCsrfResponse(retryResponse)) {
+            toastr.error(t`Your session token expired. Please reload or sign in again.`, t`Session expired`, { preventDuplicates: true });
+        }
+
+        return retryResponse;
+    };
+    csrfFetchRetryInstalled = true;
+}
+
 /**
  * @typedef {object} UploadProgress
  * @property {number} loaded Bytes uploaded so far (1 once upload completes)
@@ -1950,6 +2051,7 @@ async function firstLoadInit() {
     setStartupStage('first-load:start');
     console.debug('[init] firstLoadInit start');
     performance.mark('[init] start');
+    installCsrfFetchRetry();
     installSettingsGetRequestInterceptor();
 
     try {
@@ -14648,10 +14750,12 @@ export async function getSettings(options = {}) {
         firstRun = !!settings.firstRun;
 
         if (firstRun) {
+            setStartupStage('first-load:onboarding');
             if (isLoaderVisible()) {
                 await hideLoader();
             }
             await doOnboarding(user_avatar);
+            setStartupStage('first-load:onboarding-complete');
             firstRun = false;
             shouldPersistFirstRunCompletion = true;
         }
@@ -17901,14 +18005,14 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
             cache: 'no-cache',
         });
 
+        const data = await result.json().catch(() => ({}));
+
         if (!result.ok) {
-            throw new Error(`Failed to import character: ${result.statusText}`);
+            throw new Error(data?.message || data?.error || `Failed to import character: ${result.statusText || result.status}`);
         }
 
-        const data = await result.json();
-
         if (data.error) {
-            throw new Error(`Server returned an error: ${data.error}`);
+            throw new Error(data?.message || data.error);
         }
 
         if (data.file_name !== undefined) {
@@ -17938,7 +18042,8 @@ async function importCharacter(file, { preserveFileName = '', importTags = false
         }
     } catch (error) {
         console.error('Error importing character', error);
-        toastr.error(t`The file is likely invalid or corrupted.`, t`Could not import character`);
+        const message = error?.message || t`The file is likely invalid or corrupted.`;
+        toastr.error(message, t`Could not import character`);
     }
 }
 

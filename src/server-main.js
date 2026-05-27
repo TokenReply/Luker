@@ -357,13 +357,7 @@ app.get('/login', loginPageMiddleware);
 const webpackMiddleware = getWebpackServeMiddleware();
 app.use(webpackMiddleware);
 app.use(userCssMiddleware);
-app.use(express.static(path.join(serverDirectory, 'public'), {
-    setHeaders: (response, filePath) => {
-        if (/\.(?:css|html|js|json|mjs)$/i.test(filePath)) {
-            setFrontendNoStoreHeaders(response);
-        }
-    },
-}));
+app.use(express.static(path.join(serverDirectory, 'public')));
 
 // Public API
 app.use('/api/users', usersPublicRouter);

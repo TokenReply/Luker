@@ -1272,6 +1272,9 @@ export async function enforceUserQuotaMiddleware(request, response, next) {
 
 export function requireLoginMiddleware(request, response, next) {
     if (!request.user) {
+        if (request.path.startsWith('/api/')) {
+            return response.status(403).json({ error: 'Authentication required', code: 'AUTH_REQUIRED' });
+        }
         return response.sendStatus(403);
     }
 
@@ -1286,6 +1289,10 @@ export function requireLoginMiddleware(request, response, next) {
 export async function loginPageMiddleware(request, response) {
     if (!ENABLE_ACCOUNTS) {
         console.log('User accounts are disabled. Redirecting to index page.');
+        return response.redirect('/');
+    }
+
+    if (request.user) {
         return response.redirect('/');
     }
 

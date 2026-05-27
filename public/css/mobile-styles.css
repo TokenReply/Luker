@@ -684,6 +684,42 @@
         max-width: calc(100dvw - 16px);
     }
 
+    .popup:has(.onboarding) {
+        max-height: calc(100dvh - 16px);
+        overflow: hidden;
+    }
+
+    .popup:has(.onboarding) .popup-body {
+        max-height: calc(100dvh - 16px);
+        min-height: 0;
+    }
+
+    .popup:has(.onboarding) .popup-content {
+        min-height: 0;
+        overflow-y: auto;
+        padding: 0 6px;
+    }
+
+    .popup:has(.onboarding) .popup-controls {
+        background: var(--SmartThemeBlurTintColor);
+        flex-shrink: 0;
+        padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+        position: sticky;
+        bottom: 0;
+        z-index: 1;
+    }
+
+    .popup:has(.onboarding) .result-control,
+    .onboarding .onboardingMigrationActions .menu_button {
+        min-height: 44px;
+    }
+
+    .onboarding .onboardingMigrationActions {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+
     select[multiple] {
         max-height: 50px;
         overflow-y: auto;

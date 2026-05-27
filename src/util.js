@@ -774,11 +774,15 @@ export function tryParse(str) {
  * @returns The relative URL path from which the client can access the file.
  */
 export function clientRelativePath(root, inputPath) {
-    if (!inputPath.startsWith(root)) {
-        throw new Error('Input path does not start with the root directory');
+    const resolvedRoot = path.resolve(root);
+    const resolvedInputPath = path.resolve(inputPath);
+
+    if (!isPathUnderParent(resolvedRoot, resolvedInputPath)) {
+        throw new Error('Input path is not under the root directory');
     }
 
-    return inputPath.slice(root.length).split(path.sep).join('/');
+    const relativePath = path.relative(resolvedRoot, resolvedInputPath).split(path.sep).join('/');
+    return relativePath ? `/${relativePath}` : '';
 }
 
 /**

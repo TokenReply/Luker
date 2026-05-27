@@ -28,7 +28,6 @@ export const KEY_PREFIX = 'user:';
 const AVATAR_PREFIX = 'avatar:';
 const ENABLE_ACCOUNTS = getConfigValue('enableUserAccounts', false, 'boolean');
 const AUTHELIA_AUTH = getConfigValue('sso.autheliaAuth', false, 'boolean');
-const AUTHENTIK_AUTH = getConfigValue('sso.authentikAuth', false, 'boolean');
 const SSO_SHARED_SECRET = String(getConfigValue('sso.sharedSecret', '', null) || '');
 const SSO_SHARED_SECRET_HEADER = 'X-Lorestage-SSO-Secret';
 const PER_USER_BASIC_AUTH = getConfigValue('perUserBasicAuth', false, 'boolean');
@@ -845,10 +844,6 @@ export async function tryAutoLogin(request, basicAuthMode) {
             return true;
         }
 
-        if (AUTHENTIK_AUTH && await authentikUserLogin(request)) {
-            return true;
-        }
-
         if (basicAuthMode && PER_USER_BASIC_AUTH && await basicUserLogin(request)) {
             return true;
         }
@@ -889,23 +884,10 @@ async function autheliaUserLogin(request) {
     return headerUserLogin(request, 'Remote-User');
 }
 
-/**
- * Attempts auto-login using an Authentik header.
- * https://docs.goauthentik.io/add-secure-apps/providers/proxy/forward_auth/
- * @param {import('express').Request} request Request object
- * @returns {Promise<boolean>} Whether auto-login was performed
- */
-async function authentikUserLogin(request) {
-    return headerUserLogin(request, 'X-Authentik-Username');
-}
-
 function getEnabledSsoHeaders() {
     const headers = [];
     if (AUTHELIA_AUTH) {
         headers.push('Remote-User');
-    }
-    if (AUTHENTIK_AUTH) {
-        headers.push('X-Authentik-Username');
     }
     return headers;
 }
@@ -946,7 +928,7 @@ function hasValidSsoSharedSecret(request) {
 }
 
 export function isSsoHeaderAuthEnabled() {
-    return AUTHELIA_AUTH || AUTHENTIK_AUTH;
+    return AUTHELIA_AUTH;
 }
 
 /**

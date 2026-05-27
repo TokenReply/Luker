@@ -4,7 +4,7 @@ const SELF_PROFILING_STORAGE_KEY = 'luker.selfProfilingEnabled';
 const SELF_PROFILING_SAMPLE_INTERVAL = 10;
 const SELF_PROFILING_MAX_BUFFER_SIZE = 50000;
 const SELF_PROFILING_STATE_KEY = '__lukerSelfProfilerState';
-const LORESTAGE_BUILD_ID = '20260527-importfix1';
+const LORESTAGE_BUILD_ID = '20260527-noauth2';
 
 function getStartupState() {
     try {
@@ -196,7 +196,7 @@ async function initializeApplication() {
 
         setStartupStage('entry:import-app');
         safePerfMark('luker:init:import:app:start');
-        await import('./script.js?v=20260527-importfix1');
+        await import('./script.js');
         safePerfMark('luker:init:import:app:end');
         safePerfMeasure('luker:init:import:app', 'luker:init:import:app:start', 'luker:init:import:app:end');
 

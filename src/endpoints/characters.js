@@ -14,7 +14,7 @@ import storage from 'node-persist';
 
 import { AVATAR_WIDTH, AVATAR_HEIGHT, DEFAULT_AVATAR_PATH } from '../constants.js';
 import { default as validateAvatarUrlMiddleware, getFileNameValidationFunction, forbiddenRegExp } from '../middleware/validateFileName.js';
-import { deepMerge, humanizedDateTime, tryParse, tryReadFileSync, MemoryLimitedMap, getConfigValue, clientRelativePath, getUniqueName, sanitizeSafeCharacterReplacements } from '../util.js';
+import { deepMerge, humanizedDateTime, tryParse, tryReadFileSync, MemoryLimitedMap, getConfigValue, clientRelativePath, getUniqueName, sanitizeSafeCharacterReplacements, resolvePathWithinParent } from '../util.js';
 import { TavernCardValidator } from '../validator/TavernCardValidator.js';
 import { parse, read, write } from '../character-card-parser.js';
 import { readWorldInfoFile } from './worldinfo.js';
@@ -61,6 +61,24 @@ function truncateUtf8Bytes(value, maxBytes) {
 function normalizeCharacterInternalName(value) {
     const sanitized = sanitize(String(value || '')).trim() || 'character';
     return truncateUtf8Bytes(sanitized, MAX_CHARACTER_INTERNAL_NAME_BYTES).trim() || 'character';
+}
+
+function resolveCharacterAvatarPath(request, avatarUrl) {
+    const avatarName = sanitize(String(avatarUrl || '').trim());
+    if (!avatarName) {
+        return '';
+    }
+
+    return resolvePathWithinParent(request.user.directories.characters, avatarName) || '';
+}
+
+function resolveCharacterChatDirectory(request, avatarUrl) {
+    const characterDirectory = path.parse(sanitize(String(avatarUrl || '').trim())).name;
+    if (!characterDirectory) {
+        return '';
+    }
+
+    return resolvePathWithinParent(request.user.directories.chats, characterDirectory) || '';
 }
 
 class DiskCache {
@@ -1356,10 +1374,16 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
     const newInternalName = getPngName(newName, request.user.directories, { excludeInternalName: oldInternalName });
     const newAvatarName = `${newInternalName}.png`;
 
-    const oldAvatarPath = path.join(request.user.directories.characters, oldAvatarName);
+    const oldAvatarPath = resolveCharacterAvatarPath(request, oldAvatarName);
+    if (!oldAvatarPath) {
+        return response.sendStatus(400);
+    }
     const newAvatarPath = path.join(request.user.directories.characters, newAvatarName);
 
-    const oldChatsPath = path.join(request.user.directories.chats, oldInternalName);
+    const oldChatsPath = resolvePathWithinParent(request.user.directories.chats, oldInternalName);
+    if (!oldChatsPath) {
+        return response.sendStatus(400);
+    }
     const newChatsPath = path.join(request.user.directories.chats, newInternalName);
 
     try {
@@ -1410,7 +1434,10 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
         return;
     }
 
-    const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
+    const avatarPath = resolveCharacterAvatarPath(request, request.body.avatar_url);
+    if (!avatarPath) {
+        return response.sendStatus(400);
+    }
     let char = charaFormatData(request.body, request.user.directories);
     let targetFile = (request.body.avatar_url).replace('.png', '');
 
@@ -1487,7 +1514,10 @@ router.post('/edit-avatar', validateAvatarUrlMiddleware, async function (request
         if (!fs.existsSync(uploadPath)) {
             return response.status(400).send('Error: uploaded file does not exist');
         }
-        const characterPath = path.join(request.user.directories.characters, request.body.avatar_url);
+        const characterPath = resolveCharacterAvatarPath(request, request.body.avatar_url);
+        if (!characterPath) {
+            return response.status(400).send('Error: invalid character file');
+        }
         if (!fs.existsSync(characterPath)) {
             return response.status(400).send('Error: character file does not exist');
         }
@@ -1542,7 +1572,10 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
     }
 
     try {
-        const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
+        const avatarPath = resolveCharacterAvatarPath(request, request.body.avatar_url);
+        if (!avatarPath) {
+            return response.status(400).send('Error: invalid character file');
+        }
         const charJSON = await readCharacterData(avatarPath);
         if (typeof charJSON !== 'string') throw new Error('Failed to read character file');
 
@@ -1892,7 +1925,10 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
         return response.sendStatus(403);
     }
 
-    const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
+    const avatarPath = resolveCharacterAvatarPath(request, request.body.avatar_url);
+    if (!avatarPath) {
+        return response.sendStatus(400);
+    }
     if (!fs.existsSync(avatarPath)) {
         return response.sendStatus(400);
     }
@@ -1900,7 +1936,7 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
     deleteAllCharacterStateSidecars(avatarPath);
     fs.unlinkSync(avatarPath);
     invalidateThumbnail(request.user.directories, 'avatar', request.body.avatar_url);
-    let dir_name = (request.body.avatar_url.replace('.png', ''));
+    let dir_name = path.parse(sanitize(request.body.avatar_url)).name;
 
     if (!dir_name.length) {
         console.error('Malicious dirname prevented');
@@ -1908,7 +1944,10 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
     }
 
     if (request.body.delete_chats == true) {
-        const removedChatsDir = path.join(request.user.directories.chats, sanitize(dir_name));
+        const removedChatsDir = resolvePathWithinParent(request.user.directories.chats, sanitize(dir_name));
+        if (!removedChatsDir) {
+            return response.sendStatus(400);
+        }
         try {
             await fs.promises.rm(removedChatsDir, { recursive: true, force: true });
         } catch (err) {
@@ -1951,8 +1990,11 @@ router.post('/all', async function (request, response) {
 router.post('/get', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         if (!request.body) return response.sendStatus(400);
-        const item = request.body.avatar_url;
-        const filePath = path.join(request.user.directories.characters, item);
+        const item = sanitize(String(request.body.avatar_url || '').trim());
+        const filePath = resolveCharacterAvatarPath(request, item);
+        if (!filePath) {
+            return response.sendStatus(400);
+        }
 
         if (!fs.existsSync(filePath)) {
             return response.sendStatus(404);
@@ -1974,7 +2016,10 @@ router.post('/snapshot', validateAvatarUrlMiddleware, function (request, respons
             return response.status(400).send({ error: 'Expected body.avatar_url string.' });
         }
 
-        const characterPath = path.join(request.user.directories.characters, avatarUrl);
+        const characterPath = resolveCharacterAvatarPath(request, avatarUrl);
+        if (!characterPath) {
+            return response.status(400).send({ error: 'Invalid character file.' });
+        }
         if (!fs.existsSync(characterPath)) {
             return response.sendStatus(404);
         }
@@ -2023,7 +2068,10 @@ router.post('/state/get', validateAvatarUrlMiddleware, function (request, respon
             return response.status(400).send({ error: 'Expected body.namespace string.' });
         }
 
-        const characterPath = path.join(request.user.directories.characters, avatarUrl);
+        const characterPath = resolveCharacterAvatarPath(request, avatarUrl);
+        if (!characterPath) {
+            return response.status(400).send({ error: 'Invalid character file.' });
+        }
         const stateFilePath = getCharacterStateSidecarPath(characterPath, namespace);
         if (!stateFilePath || !fs.existsSync(stateFilePath)) {
             return response.send({ ok: true, data: null });
@@ -2062,7 +2110,10 @@ router.post('/state/set', validateAvatarUrlMiddleware, function (request, respon
             return response.status(400).send({ error: 'Expected body.data object.' });
         }
 
-        const characterPath = path.join(request.user.directories.characters, avatarUrl);
+        const characterPath = resolveCharacterAvatarPath(request, avatarUrl);
+        if (!characterPath) {
+            return response.status(400).send({ error: 'Invalid character file.' });
+        }
         if (!fs.existsSync(characterPath)) {
             return response.status(404).send({ error: 'Character not found.' });
         }
@@ -2091,7 +2142,10 @@ router.post('/state/delete', validateAvatarUrlMiddleware, function (request, res
             return response.status(400).send({ error: 'Expected body.namespace string.' });
         }
 
-        const characterPath = path.join(request.user.directories.characters, avatarUrl);
+        const characterPath = resolveCharacterAvatarPath(request, avatarUrl);
+        if (!characterPath) {
+            return response.status(400).send({ error: 'Invalid character file.' });
+        }
         const stateFilePath = getCharacterStateSidecarPath(characterPath, namespace);
         if (!stateFilePath || !fs.existsSync(stateFilePath)) {
             return response.send({ ok: true, deleted: false });
@@ -2109,8 +2163,10 @@ router.post('/chats', validateAvatarUrlMiddleware, async function (request, resp
     try {
         if (!request.body) return response.sendStatus(400);
 
-        const characterDirectory = (request.body.avatar_url).replace('.png', '');
-        const chatsDirectory = path.join(request.user.directories.chats, characterDirectory);
+        const chatsDirectory = resolveCharacterChatDirectory(request, request.body.avatar_url);
+        if (!chatsDirectory) {
+            return response.sendStatus(400);
+        }
 
         if (!fs.existsSync(chatsDirectory)) {
             return response.send({ error: true });
@@ -2129,7 +2185,7 @@ router.post('/chats', validateAvatarUrlMiddleware, async function (request, resp
 
         const jsonFilesPromise = jsonFiles.map((file) => {
             const withMetadata = !!request.body.metadata;
-            const pathToFile = path.join(request.user.directories.chats, characterDirectory, file);
+            const pathToFile = path.join(chatsDirectory, file);
             return getChatInfo(pathToFile, {}, withMetadata);
         });
 
@@ -2317,7 +2373,10 @@ router.post('/duplicate', validateAvatarUrlMiddleware, async function (request, 
             console.debug(request.body);
             return response.sendStatus(400);
         }
-        let filename = path.join(request.user.directories.characters, sanitize(request.body.avatar_url));
+        let filename = resolveCharacterAvatarPath(request, request.body.avatar_url);
+        if (!filename) {
+            return response.sendStatus(400);
+        }
         if (!fs.existsSync(filename)) {
             console.error('file for dupe not found', filename);
             return response.sendStatus(404);
@@ -2350,7 +2409,10 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
             return response.sendStatus(400);
         }
 
-        let filename = path.join(request.user.directories.characters, sanitize(request.body.avatar_url));
+        let filename = resolveCharacterAvatarPath(request, request.body.avatar_url);
+        if (!filename) {
+            return response.sendStatus(400);
+        }
 
         if (!fs.existsSync(filename)) {
             return response.sendStatus(404);

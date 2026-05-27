@@ -129,11 +129,6 @@ const keyMigrationMap = [
         newKey: 'sso.autheliaAuth',
         migrate: (value) => value,
     },
-    {
-        oldKey: 'authentikAuth',
-        newKey: 'sso.authentikAuth',
-        migrate: (value) => value,
-    },
 ];
 
 /**

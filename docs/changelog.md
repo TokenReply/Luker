@@ -4,6 +4,52 @@
 
 ## Current version
 
+### 2026-05-27 live hotfixes
+
+#### Authentication, logout, and privacy isolation
+
+- Removed the remaining production Authentik dependency from Lorestage.
+  - Removed the backend Authentik header-login path from `src/users.js`; `X-Authentik-Username` is no longer an accepted SSO login header.
+  - Removed the old `authentikAuth` config migration and removed `sso.authentikAuth` from the default config template.
+  - Removed `sso.authentikAuth` and the SSO shared secret from live `config.yaml`.
+  - Disabled the `luker.service` SSO secret drop-in so Luker no longer starts with `SILLYTAVERN_SSO_SHAREDSECRET`.
+  - Removed the `www.lorestage.com` Caddy forward-auth checks to the old auth service (`127.0.0.1:18106`) for app traffic.
+  - Removed Caddy interception of `/login`, `/api/users/list`, `/auth/*`, and `/api/auth/*` on `www.lorestage.com`; local Luker account login now owns those routes.
+  - Caddy now strips `Remote-User`, `X-Authentik-*`, and `X-Lorestage-SSO-Secret` before proxying to Luker.
+- Added a local `/auth/logout` compatibility endpoint that clears the Luker session and redirects to `/login?noauto=true`, so old Sign out links still work without the central auth service.
+- Updated the Account & Email button to open the in-app account profile instead of linking to the removed central auth settings page.
+- Removed the WebSocket internal request injection of `x-authentik-username`; WS proxy identity now remains bounded by the one-time ticket, session cookie, CSRF token, and current Luker user context.
+- Hardened per-user chat and character path resolution:
+  - Chat save/append/patch/meta/get/get-delta/rename/delete/export/search/import now resolve character chat directories and files under the current user's chat root before filesystem access.
+  - Character rename/edit/avatar/edit-attribute/delete/get/snapshot/state/chats/duplicate/export now resolve avatar and chat paths under the current user's directories before filesystem access.
+  - `clientRelativePath()` now uses resolved parent-path checks instead of string prefix checks, while preserving the previous leading-slash URL shape.
+- Multi-agent audit result: no ordinary-user route was found that directly reads another user's chats, character cards, thumbnails, or per-user files. The remaining deliberate privacy surfaces are admin-only tooling and same-account request-inspector history.
+
+#### Startup, mobile, and browser cache fixes
+
+- Added a frontend startup recovery overlay that records startup stage/error and offers Reload / Sign out actions when initialization stalls.
+- Bumped frontend build IDs and no-store cache headers to prevent mobile Chrome/Brave from running stale `init.js`, `script.js`, or user-control modules after deploy.
+- Removed cache-busting query strings from ES module imports of shared modules (`script.js`, `scripts/user.js`) after finding that Chrome treated queried and unqueried imports as separate module instances. The duplicate main-script instance bound drawer click handlers twice, so one tap opened a top drawer and the second duplicate handler immediately closed it.
+- Updated Caddy cache behavior for Lorestage JS/CSS/static routes to avoid Cloudflare/browser stale-cache loops during hotfixes.
+- Verified the Chrome/Brave black-screen reports shifted from blank-page startup failures to normal page render after cache and startup changes.
+
+#### Character card import fixes
+
+- Fixed character import paths with long or punctuation-heavy filenames by truncating the internal PNG filename to the filesystem byte limit while preserving the displayed character name.
+- Added frontend import format detection from MIME type as well as extension, and added a toast for unsupported files instead of silently doing nothing.
+- Verified the `djjasondavid` import of `辛红棉.png` landed in the correct per-user character directory and parsed as a valid `chara_card_v3` PNG card.
+
+#### Deployment and verification notes
+
+- Live services were reloaded/restarted only when needed:
+  - Caddy reloads applied routing/cache/auth-header changes.
+  - Luker restarts applied backend code/config changes.
+- Validation performed:
+  - `node --check` on changed backend/frontend modules.
+  - `git diff --check`.
+  - Public header-spoof tests confirmed external requests cannot become another user by sending `X-Authentik-Username`.
+  - Post-Authentik-removal checks confirmed `/login` is served by Luker directly and no new `Received X-Authentik-Username...` warnings appear after restart.
+
 ### Core features
 
 - **Memory Graph** — Knowledge-graph long-term memory, 9-layer hybrid recall pipeline

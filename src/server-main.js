@@ -338,6 +338,18 @@ app.get('/callback/:source?', (request, response) => {
     return response.redirect(307, path);
 });
 
+// Local compatibility endpoint for old central-auth logout links.
+app.get('/auth/logout', (request, response) => {
+    if (request.session) {
+        request.session.handle = null;
+        request.session.csrfToken = null;
+        request.session.version = null;
+        request.session = null;
+    }
+
+    return response.redirect('/login?noauto=true');
+});
+
 // Host login page
 app.get('/login', loginPageMiddleware);
 

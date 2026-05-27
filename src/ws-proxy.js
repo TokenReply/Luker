@@ -510,11 +510,8 @@ async function startJob(ws, msg, ctx) {
 
         // Build request headers — forward client headers + WS context
         const reqHeaders = { ...clientHeaders };
-        for (const header of ['remote-user', 'x-authentik-username', 'x-authentik-email', 'x-authentik-name', 'x-authentik-uid']) {
+        for (const header of ['remote-user', 'x-authentik-username', 'x-authentik-email', 'x-authentik-name', 'x-authentik-uid', 'x-lorestage-sso-secret']) {
             deleteHeaderCaseInsensitive(reqHeaders, header);
-        }
-        if (ctx.handle) {
-            reqHeaders['x-authentik-username'] = ctx.handle;
         }
         reqHeaders.host = ctx.originalHost;
         if (ctx.cookie) reqHeaders.cookie = ctx.cookie;

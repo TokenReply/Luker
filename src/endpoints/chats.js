@@ -1063,6 +1063,40 @@ function resolveAvatarDirectoryName(avatarUrl) {
     return path.basename(String(avatarUrl || '').replace('.png', ''));
 }
 
+/**
+ * Resolves a character chat directory under the current user's chats root.
+ * @param {import('express').Request} request Express request.
+ * @param {string} avatarUrl Character avatar URL.
+ * @returns {string} Safe directory path or empty string.
+ */
+function resolveCharacterChatDirectory(request, avatarUrl) {
+    const avatarDir = resolveAvatarDirectoryName(avatarUrl);
+    if (!avatarDir) {
+        return '';
+    }
+
+    const directoryPath = path.resolve(request.user.directories.chats, avatarDir);
+    return isPathUnderParent(request.user.directories.chats, directoryPath) ? directoryPath : '';
+}
+
+/**
+ * Resolves a character chat file under the current user's chats root.
+ * @param {import('express').Request} request Express request.
+ * @param {string} avatarUrl Character avatar URL.
+ * @param {string} fileName Chat file name.
+ * @returns {string} Safe file path or empty string.
+ */
+function resolveCharacterChatFilePath(request, avatarUrl, fileName) {
+    const directoryPath = resolveCharacterChatDirectory(request, avatarUrl);
+    const normalizedFileName = normalizeJsonlFileName(fileName);
+    if (!directoryPath || !normalizedFileName) {
+        return '';
+    }
+
+    const chatFilePath = path.resolve(directoryPath, normalizedFileName);
+    return isPathUnderParent(request.user.directories.chats, chatFilePath) ? chatFilePath : '';
+}
+
 function normalizeChatStateNamespace(namespace) {
     const raw = String(namespace || '').trim().toLowerCase();
     if (!raw) {
@@ -1085,11 +1119,7 @@ function resolvePathInsideDirectory(baseDirectory, requestedFileName) {
     }
 
     const resolved = path.resolve(base, safeName);
-    const baseWithSep = base.endsWith(path.sep) ? base : `${base}${path.sep}`;
-    if (resolved !== base && !resolved.startsWith(baseWithSep)) {
-        return '';
-    }
-    return resolved;
+    return isPathUnderParent(base, resolved) ? resolved : '';
 }
 
 /**
@@ -1210,7 +1240,8 @@ function resolveChatFilePathForStateTarget(request, target) {
         return null;
     }
 
-    return path.join(request.user.directories.chats, avatarDir, fileName);
+    const chatFilePath = path.resolve(request.user.directories.chats, avatarDir, fileName);
+    return isPathUnderParent(request.user.directories.chats, chatFilePath) ? chatFilePath : null;
 }
 
 /**
@@ -1872,11 +1903,10 @@ export async function trySaveChat(chatData, filePath, skipIntegrityCheck = false
 router.post('/save', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const handle = request.user.profile.handle;
-        const cardName = String(request.body.avatar_url).replace('.png', '');
+        const cardName = resolveAvatarDirectoryName(request.body.avatar_url);
         const chatData = request.body.chat;
-        const chatFileName = `${String(request.body.file_name)}.jsonl`;
-        const chatFilePath = path.join(request.user.directories.chats, cardName, sanitize(chatFileName));
-        if (!isPathUnderParent(request.user.directories.chats, chatFilePath)) {
+        const chatFilePath = resolveCharacterChatFilePath(request, request.body.avatar_url, request.body.file_name);
+        if (!chatFilePath) {
             return response.sendStatus(400);
         }
 
@@ -1899,9 +1929,10 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
 
 router.post('/append', validateAvatarUrlMiddleware, async function (request, response) {
     try {
-        const cardName = String(request.body.avatar_url).replace('.png', '');
-        const chatFileName = `${String(request.body.file_name)}.jsonl`;
-        const chatFilePath = path.join(request.user.directories.chats, cardName, sanitize(chatFileName));
+        const chatFilePath = resolveCharacterChatFilePath(request, request.body.avatar_url, request.body.file_name);
+        if (!chatFilePath) {
+            return response.sendStatus(400);
+        }
         const chatMetadata = _.isObjectLike(request.body.chat_metadata) ? request.body.chat_metadata : {};
         const integritySlug = typeof request.body.integrity === 'string' ? request.body.integrity : undefined;
         const force = Boolean(request.body.force);
@@ -1936,9 +1967,10 @@ router.post('/append', validateAvatarUrlMiddleware, async function (request, res
 
 router.post('/patch', validateAvatarUrlMiddleware, async function (request, response) {
     try {
-        const cardName = String(request.body.avatar_url).replace('.png', '');
-        const chatFileName = `${String(request.body.file_name)}.jsonl`;
-        const chatFilePath = path.join(request.user.directories.chats, cardName, sanitize(chatFileName));
+        const chatFilePath = resolveCharacterChatFilePath(request, request.body.avatar_url, request.body.file_name);
+        if (!chatFilePath) {
+            return response.sendStatus(400);
+        }
         const chatMetadata = _.isObjectLike(request.body.chat_metadata) ? request.body.chat_metadata : {};
         const integritySlug = typeof request.body.integrity === 'string' ? request.body.integrity : undefined;
         const force = Boolean(request.body.force);
@@ -1993,9 +2025,10 @@ router.post('/meta', validateAvatarUrlMiddleware, async function (request, respo
             return response.status(400).send({ error: 'Expected body.file_name string.' });
         }
 
-        const cardName = String(request.body.avatar_url).replace('.png', '');
-        const chatFileName = `${String(request.body.file_name)}.jsonl`;
-        const chatFilePath = path.join(request.user.directories.chats, cardName, sanitize(chatFileName));
+        const chatFilePath = resolveCharacterChatFilePath(request, request.body.avatar_url, request.body.file_name);
+        if (!chatFilePath) {
+            return response.sendStatus(400);
+        }
         const chatMetadata = request.body.chat_metadata;
         const integritySlug = typeof request.body.integrity === 'string' ? request.body.integrity : undefined;
         const force = Boolean(request.body.force);
@@ -2032,9 +2065,10 @@ router.post('/meta/patch', validateAvatarUrlMiddleware, async function (request,
             return response.status(400).send({ error: 'No metadata patch operations found. Expected body.operations or body.operation.' });
         }
 
-        const cardName = String(request.body.avatar_url).replace('.png', '');
-        const chatFileName = `${String(request.body.file_name)}.jsonl`;
-        const chatFilePath = path.join(request.user.directories.chats, cardName, sanitize(chatFileName));
+        const chatFilePath = resolveCharacterChatFilePath(request, request.body.avatar_url, request.body.file_name);
+        if (!chatFilePath) {
+            return response.sendStatus(400);
+        }
         const integritySlug = typeof request.body.integrity === 'string' ? request.body.integrity : undefined;
         const force = Boolean(request.body.force);
 
@@ -2107,9 +2141,8 @@ export function getChatData(chatFilePath) {
 
 router.post('/get', validateAvatarUrlMiddleware, function (request, response) {
     try {
-        const dirName = String(request.body.avatar_url).replace('.png', '');
-        const directoryPath = path.join(request.user.directories.chats, dirName);
-        if (!isPathUnderParent(request.user.directories.chats, directoryPath)) {
+        const directoryPath = resolveCharacterChatDirectory(request, request.body.avatar_url);
+        if (!directoryPath) {
             return response.sendStatus(400);
         }
         const chatDirExists = fs.existsSync(directoryPath);
@@ -2124,8 +2157,10 @@ router.post('/get', validateAvatarUrlMiddleware, function (request, response) {
             return response.send({ new_chat: true });
         }
 
-        const chatFileName = `${String(request.body.file_name)}.jsonl`;
-        const chatFilePath = path.join(directoryPath, sanitize(chatFileName));
+        const chatFilePath = resolveCharacterChatFilePath(request, request.body.avatar_url, request.body.file_name);
+        if (!chatFilePath) {
+            return response.sendStatus(400);
+        }
 
         return response.send(getChatData(chatFilePath));
     } catch (error) {
@@ -2136,8 +2171,10 @@ router.post('/get', validateAvatarUrlMiddleware, function (request, response) {
 
 router.post('/get-delta', validateAvatarUrlMiddleware, function (request, response) {
     try {
-        const dirName = String(request.body.avatar_url).replace('.png', '');
-        const directoryPath = path.join(request.user.directories.chats, dirName);
+        const directoryPath = resolveCharacterChatDirectory(request, request.body.avatar_url);
+        if (!directoryPath) {
+            return response.sendStatus(400);
+        }
         const chatDirExists = fs.existsSync(directoryPath);
 
         if (!chatDirExists || !request.body.file_name) {
@@ -2153,8 +2190,10 @@ router.post('/get-delta', validateAvatarUrlMiddleware, function (request, respon
 
         const fromIndex = Number(request.body.from_index) || 0;
         const limit = Number(request.body.limit) || 0;
-        const chatFileName = `${String(request.body.file_name)}.jsonl`;
-        const chatFilePath = path.join(directoryPath, sanitize(chatFileName));
+        const chatFilePath = resolveCharacterChatFilePath(request, request.body.avatar_url, request.body.file_name);
+        if (!chatFilePath) {
+            return response.sendStatus(400);
+        }
 
         return response.send(getChatDataDelta(chatFilePath, fromIndex, limit));
     } catch (error) {
@@ -2299,12 +2338,15 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
 
         const pathToFolder = request.body.is_group
             ? request.user.directories.groupChats
-            : path.join(request.user.directories.chats, String(request.body.avatar_url).replace('.png', ''));
-        if (!request.body.is_group && !isPathUnderParent(request.user.directories.chats, pathToFolder)) {
+            : resolveCharacterChatDirectory(request, request.body.avatar_url);
+        if (!pathToFolder) {
             return response.sendStatus(400);
         }
-        const pathToOriginalFile = path.join(pathToFolder, sanitize(request.body.original_file));
-        const pathToRenamedFile = path.join(pathToFolder, sanitize(request.body.renamed_file));
+        const pathToOriginalFile = resolvePathInsideDirectory(pathToFolder, request.body.original_file);
+        const pathToRenamedFile = resolvePathInsideDirectory(pathToFolder, request.body.renamed_file);
+        if (!pathToOriginalFile || !pathToRenamedFile) {
+            return response.sendStatus(400);
+        }
         const sanitizedFileName = path.parse(pathToRenamedFile).name;
         console.debug('Old chat name', pathToOriginalFile);
         console.debug('New chat name', pathToRenamedFile);
@@ -2339,10 +2381,9 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
             request.body.chatfile += '.jsonl';
         }
 
-        const dirName = String(request.body.avatar_url).replace('.png', '');
         const chatFileName = String(request.body.chatfile);
-        const chatFilePath = path.join(request.user.directories.chats, dirName, sanitize(chatFileName));
-        if (!isPathUnderParent(request.user.directories.chats, chatFilePath)) {
+        const chatFilePath = resolveCharacterChatFilePath(request, request.body.avatar_url, chatFileName);
+        if (!chatFilePath) {
             return response.sendStatus(400);
         }
         //Return success if the file was deleted.
@@ -2366,7 +2407,10 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
     }
     const pathToFolder = request.body.is_group
         ? request.user.directories.groupChats
-        : path.join(request.user.directories.chats, String(request.body.avatar_url).replace('.png', ''));
+        : resolveCharacterChatDirectory(request, request.body.avatar_url);
+    if (!pathToFolder) {
+        return response.sendStatus(400);
+    }
     const filename = resolvePathInsideDirectory(pathToFolder, request.body.file);
     if (!filename) {
         return response.sendStatus(400);
@@ -2456,7 +2500,7 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
     if (!request.body) return response.sendStatus(400);
 
     const format = request.body.file_type;
-    const avatarUrl = (request.body.avatar_url).replace('.png', '');
+    const avatarUrl = resolveAvatarDirectoryName(request.body.avatar_url);
     const characterName = sanitize(request.body.character_name) || 'Character';
     const userName = sanitize(request.body.user_name) || 'User';
     const fileNames = [];
@@ -2465,8 +2509,8 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
         return response.sendStatus(400);
     }
 
-    const directoryPath = path.join(request.user.directories.chats, avatarUrl);
-    if (!isPathUnderParent(request.user.directories.chats, directoryPath)) {
+    const directoryPath = resolveCharacterChatDirectory(request, request.body.avatar_url);
+    if (!directoryPath) {
         return response.sendStatus(400);
     }
 
@@ -2513,7 +2557,7 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
 
             await Promise.all(fileNames.map((fileName) => refreshRecentChatIndexEntry(
                 request,
-                path.join(request.user.directories.chats, avatarUrl, fileName),
+                path.join(directoryPath, fileName),
                 { avatar: `${avatarUrl}.png` },
             )));
 
@@ -2864,8 +2908,10 @@ router.post('/search', validateAvatarUrlMiddleware, async function (request, res
                 .filter(fileName => fs.existsSync(fileName));
         } else {
             // Regular character chat directory
-            const character_name = avatar_url.replace('.png', '');
-            const directoryPath = path.join(request.user.directories.chats, character_name);
+            const directoryPath = resolveCharacterChatDirectory(request, avatar_url);
+            if (!directoryPath) {
+                return response.sendStatus(400);
+            }
 
             if (!fs.existsSync(directoryPath)) {
                 return response.send([]);

@@ -2847,6 +2847,10 @@ jQuery(() => {
         event.preventDefault();
         logout();
     });
+    $('#lorestage_account_link').on('click', (event) => {
+        event.preventDefault();
+        openUserProfile();
+    });
     $('#admin_button').on('click', () => {
         openAdminPanel();
     });

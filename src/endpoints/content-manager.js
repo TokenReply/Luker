@@ -24,9 +24,9 @@ const USER_AGENT = 'Luker';
 const EXTERNAL_IMPORT_TIMEOUT_MS = 20_000;
 const JANNY_API_TIMEOUT_MS = 12_000;
 const JANNY_CONTENT_DOMAINS = ['jannyai.com', 'jannyai.me', 'janitorai.com', 'janitorai.me'];
-const JANNY_RESIN_URL = String(process.env.LORESTAGE_JANNY_RESIN_URL || '').replace(/\/+$/, '');
-const JANNY_RESIN_PLATFORM = String(process.env.LORESTAGE_JANNY_RESIN_PLATFORM || 'Default').trim() || 'Default';
-const JANNY_RESIN_ATTEMPTS = Math.max(1, Number.parseInt(process.env.LORESTAGE_JANNY_RESIN_ATTEMPTS || '5', 10) || 5);
+const EXTERNAL_IMPORT_RESIN_URL = String(process.env.LORESTAGE_IMPORT_RESIN_URL || process.env.LORESTAGE_JANNY_RESIN_URL || '').replace(/\/+$/, '');
+const EXTERNAL_IMPORT_RESIN_PLATFORM = String(process.env.LORESTAGE_IMPORT_RESIN_PLATFORM || process.env.LORESTAGE_JANNY_RESIN_PLATFORM || 'Default').trim() || 'Default';
+const EXTERNAL_IMPORT_RESIN_ATTEMPTS = Math.max(1, Number.parseInt(process.env.LORESTAGE_IMPORT_RESIN_ATTEMPTS || process.env.LORESTAGE_JANNY_RESIN_ATTEMPTS || '8', 10) || 8);
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
 
 /**
@@ -405,10 +405,10 @@ function getContentLog(contentLogPath) {
 
 async function downloadChubLorebook(id) {
     const [lorebooks, creatorName, projectName] = id.split('/');
-    const result = await fetch(`https://api.chub.ai/api/${lorebooks}/${creatorName}/${projectName}`, {
+    const { response: result, body: metadata } = await fetchExternalImportWithFallback(`https://api.chub.ai/api/${lorebooks}/${creatorName}/${projectName}`, {
         method: 'GET',
         headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
-    });
+    }, EXTERNAL_IMPORT_TIMEOUT_MS, readJsonResponse);
 
     if (!result.ok) {
         const text = await result.text();
@@ -417,7 +417,6 @@ async function downloadChubLorebook(id) {
     }
 
     /** @type {any} */
-    const metadata = await result.json();
     const projectId = metadata.node?.id;
 
     if (!projectId) {
@@ -425,10 +424,10 @@ async function downloadChubLorebook(id) {
     }
 
     const downloadUrl = `https://api.chub.ai/api/v4/projects/${projectId}/repository/files/raw%252Fsillytavern_raw.json/raw`;
-    const downloadResult = await fetch(downloadUrl, {
+    const { response: downloadResult, body: buffer } = await fetchExternalImportWithFallback(downloadUrl, {
         method: 'GET',
         headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
-    });
+    }, EXTERNAL_IMPORT_TIMEOUT_MS, readBufferResponse);
 
     if (!downloadResult.ok) {
         const text = await downloadResult.text();
@@ -437,7 +436,6 @@ async function downloadChubLorebook(id) {
     }
 
     const name = projectName;
-    const buffer = Buffer.from(await downloadResult.arrayBuffer());
     const fileName = `${sanitize(name)}.json`;
     const fileType = downloadResult.headers.get('content-type');
 
@@ -446,10 +444,10 @@ async function downloadChubLorebook(id) {
 
 async function downloadChubCharacter(id) {
     const [creatorName, projectName] = id.split('/');
-    const result = await fetch(`https://api.chub.ai/api/characters/${creatorName}/${projectName}?full=true`, {
+    const { response: result, body: metadata } = await fetchExternalImportWithFallback(`https://api.chub.ai/api/characters/${creatorName}/${projectName}?full=true`, {
         method: 'GET',
         headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
-    });
+    }, EXTERNAL_IMPORT_TIMEOUT_MS, readJsonResponse);
 
     if (!result.ok) {
         const text = await result.text();
@@ -458,7 +456,6 @@ async function downloadChubCharacter(id) {
     }
 
     /** @type {any} */
-    const metadata = await result.json();
     const { definition, topics } = metadata.node;
 
     /** @type {TavernCardV2} */
@@ -492,9 +489,16 @@ async function downloadChubCharacter(id) {
     const imageUrl = metadata.node?.max_res_url;
 
     if (imageUrl) {
-        const downloadResult = await fetch(imageUrl);
-        if (downloadResult.ok) {
-            imageBuffer = Buffer.from(await downloadResult.arrayBuffer());
+        try {
+            const { response: downloadResult, body: downloadedImageBuffer } = await fetchExternalImportWithFallback(imageUrl, {
+                method: 'GET',
+                headers: { 'Accept': 'image/png,*/*;q=0.8', 'User-Agent': USER_AGENT },
+            }, EXTERNAL_IMPORT_TIMEOUT_MS, readPngBufferResponse);
+            if (downloadResult.ok) {
+                imageBuffer = downloadedImageBuffer;
+            }
+        } catch (error) {
+            console.warn('Failed to download Chub avatar, using default avatar:', error.message);
         }
     }
 
@@ -511,7 +515,10 @@ async function downloadChubCharacter(id) {
  * @returns {Promise<{buffer: Buffer, fileName: string, fileType: string}>}
  */
 async function downloadPygmalionCharacter(id) {
-    const result = await fetch(`https://server.pygmalion.chat/api/export/character/${id}/v2`);
+    const { response: result, body: jsonData } = await fetchExternalImportWithFallback(`https://server.pygmalion.chat/api/export/character/${id}/v2`, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
+    }, EXTERNAL_IMPORT_TIMEOUT_MS, readJsonResponse);
 
     if (!result.ok) {
         const text = await result.text();
@@ -520,7 +527,6 @@ async function downloadPygmalionCharacter(id) {
     }
 
     /** @type {any} */
-    const jsonData = await result.json();
     const characterData = jsonData?.character;
 
     if (!characterData || typeof characterData !== 'object') {
@@ -536,8 +542,13 @@ async function downloadPygmalionCharacter(id) {
             throw new Error('Failed to download avatar');
         }
 
-        const avatarResult = await fetch(avatarUrl);
-        const avatarBuffer = Buffer.from(await avatarResult.arrayBuffer());
+        const { response: avatarResult, body: avatarBuffer } = await fetchExternalImportWithFallback(avatarUrl, {
+            method: 'GET',
+            headers: { 'Accept': 'image/png,*/*;q=0.8', 'User-Agent': USER_AGENT },
+        }, EXTERNAL_IMPORT_TIMEOUT_MS, readBufferResponse);
+        if (!avatarResult.ok) {
+            throw new Error('Failed to download avatar');
+        }
 
         const cardBuffer = write(avatarBuffer, JSON.stringify(characterData));
 
@@ -625,27 +636,56 @@ async function downloadJannyCharacter(uuid) {
     return await downloadJannyCharacterFromApi(uuid);
 }
 
-function isJannyResinConfigured() {
-    return Boolean(JANNY_RESIN_URL);
+function isExternalImportResinConfigured() {
+    return Boolean(EXTERNAL_IMPORT_RESIN_URL);
 }
 
-function buildJannyResinUrl(targetUrl) {
+function buildExternalImportResinUrl(targetUrl) {
     const parsedUrl = new URL(targetUrl);
     const protocol = parsedUrl.protocol.replace(':', '');
 
     if (protocol !== 'http' && protocol !== 'https') {
-        throw new Error('Unsupported Janny download protocol');
+        throw new Error('Unsupported external import protocol');
     }
 
-    return `${JANNY_RESIN_URL}/${encodeURIComponent(JANNY_RESIN_PLATFORM)}/${protocol}/${parsedUrl.host}${parsedUrl.pathname}${parsedUrl.search}`;
+    return `${EXTERNAL_IMPORT_RESIN_URL}/${encodeURIComponent(EXTERNAL_IMPORT_RESIN_PLATFORM)}/${protocol}/${parsedUrl.host}${parsedUrl.pathname}${parsedUrl.search}`;
 }
 
-function isRetriableJannyStatus(status) {
+function isRetriableExternalImportStatus(status) {
     return status === 403 || status === 408 || status === 429 || status >= 500;
 }
 
 function isPngBuffer(buffer) {
     return buffer.length >= PNG_SIGNATURE.length && buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE);
+}
+
+async function readJsonResponse(response) {
+    return await response.json();
+}
+
+async function readBufferResponse(response) {
+    return Buffer.from(await response.arrayBuffer());
+}
+
+async function readPngBufferResponse(response) {
+    const buffer = await readBufferResponse(response);
+
+    if (!isPngBuffer(buffer)) {
+        throw new Error(`External import returned non-PNG content: ${response.headers.get('content-type') || 'unknown'}`);
+    }
+
+    return buffer;
+}
+
+async function readNonHtmlBufferResponse(response) {
+    const contentType = response.headers.get('content-type') || '';
+    const buffer = await readBufferResponse(response);
+
+    if (contentType.toLowerCase().includes('text/html')) {
+        throw new Error('External import returned HTML instead of a card file');
+    }
+
+    return buffer;
 }
 
 async function drainResponse(response) {
@@ -656,81 +696,84 @@ async function drainResponse(response) {
     }
 }
 
-function sanitizeJannyError(error) {
-    const message = String(error?.message || error || 'Janny download request failed');
-    const sanitizedMessage = JANNY_RESIN_URL ? message.replaceAll(JANNY_RESIN_URL, '[janny-resin]') : message;
+function sanitizeExternalImportError(error) {
+    const message = String(error?.message || error || 'External import request failed');
+    const sanitizedMessage = EXTERNAL_IMPORT_RESIN_URL ? message.replaceAll(EXTERNAL_IMPORT_RESIN_URL, '[external-import-resin]') : message;
     return new Error(sanitizedMessage);
 }
 
-async function fetchJannyWithRetries(targetUrl, options = {}, timeoutMs = JANNY_API_TIMEOUT_MS, readBody = null) {
-    const useResin = isJannyResinConfigured();
-    const attempts = useResin ? JANNY_RESIN_ATTEMPTS : 1;
+async function fetchExternalImportWithFallback(targetUrl, options = {}, timeoutMs = EXTERNAL_IMPORT_TIMEOUT_MS, readBody = null) {
+    const resinAttempts = isExternalImportResinConfigured() ? EXTERNAL_IMPORT_RESIN_ATTEMPTS : 0;
+    const totalAttempts = 1 + resinAttempts;
     let lastError;
 
-    for (let attempt = 1; attempt <= attempts; attempt++) {
+    for (let attempt = 1; attempt <= totalAttempts; attempt++) {
+        const useResin = attempt > 1;
+        const canRetry = attempt < totalAttempts;
+
         try {
-            const requestUrl = useResin ? buildJannyResinUrl(targetUrl) : targetUrl;
+            const requestUrl = useResin ? buildExternalImportResinUrl(targetUrl) : targetUrl;
             const response = await fetchWithTimeout(requestUrl, options, timeoutMs);
 
-            if (response.ok || !useResin || !isRetriableJannyStatus(response.status) || attempt === attempts) {
-                if (!response.ok || !readBody) {
-                    return { response };
-                }
-
-                try {
-                    return { response, body: await readBody(response) };
-                } catch (error) {
-                    lastError = error;
-
-                    if (!useResin || attempt === attempts) {
-                        throw sanitizeJannyError(error);
-                    }
-
+            if (!response.ok) {
+                if (canRetry && isRetriableExternalImportStatus(response.status)) {
+                    await drainResponse(response);
                     continue;
                 }
+
+                return { response };
             }
 
-            await drainResponse(response);
+            if (!readBody) {
+                return { response };
+            }
+
+            try {
+                return { response, body: await readBody(response) };
+            } catch (error) {
+                lastError = error;
+
+                if (!canRetry) {
+                    throw sanitizeExternalImportError(error);
+                }
+
+                continue;
+            }
         } catch (error) {
             lastError = error;
 
-            if (!useResin || attempt === attempts) {
-                throw sanitizeJannyError(error);
+            if (!canRetry) {
+                throw sanitizeExternalImportError(error);
             }
         }
     }
 
-    throw lastError ? sanitizeJannyError(lastError) : new Error('Failed to download character');
+    throw lastError ? sanitizeExternalImportError(lastError) : new Error('External import request failed');
 }
 
 async function downloadJannyCharacterFromApi(uuid) {
     // This endpoint is being guarded behind Bot Fight Mode of Cloudflare
     // So hosted ST on Azure/AWS/GCP/Collab might get blocked by IP
     // Should work normally on self-host PC/Android
-    const { response: result, body: downloadResult } = await fetchJannyWithRetries('https://api.jannyai.com/api/v1/download', {
+    const { response: result, body: downloadResult } = await fetchExternalImportWithFallback('https://api.jannyai.com/api/v1/download', {
         method: 'POST',
         headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify({
             'characterId': uuid,
         }),
-    }, JANNY_API_TIMEOUT_MS, response => response.json());
+    }, JANNY_API_TIMEOUT_MS, readJsonResponse);
 
     if (result.ok) {
         /** @type {any} */
         if (downloadResult.status === 'ok' && downloadResult.downloadUrl) {
-            const { response: imageResult, body: buffer } = await fetchJannyWithRetries(downloadResult.downloadUrl, {
+            const { response: imageResult, body: buffer } = await fetchExternalImportWithFallback(downloadResult.downloadUrl, {
                 method: 'GET',
                 headers: { 'Accept': 'image/png,*/*;q=0.8' },
-            }, EXTERNAL_IMPORT_TIMEOUT_MS, async response => Buffer.from(await response.arrayBuffer()));
+            }, EXTERNAL_IMPORT_TIMEOUT_MS, readPngBufferResponse);
 
             if (!imageResult.ok) {
                 const text = await imageResult.text();
                 console.error('Janny image returned error', imageResult.status, imageResult.statusText, text.slice(0, 500));
-                throw new Error('Failed to download character');
-            }
-
-            if (!isPngBuffer(buffer)) {
-                console.error('Janny image returned non-PNG content', imageResult.headers.get('content-type'));
                 throw new Error('Failed to download character');
             }
 
@@ -753,13 +796,15 @@ async function downloadJannyCharacterFromApi(uuid) {
 async function downloadAICCCharacter(id) {
     const apiURL = `https://aicharactercards.com/wp-json/pngapi/v1/image/${id}`;
     try {
-        const response = await fetch(apiURL);
+        const { response, body: buffer } = await fetchExternalImportWithFallback(apiURL, {
+            method: 'GET',
+            headers: { 'Accept': 'image/png,*/*;q=0.8', 'User-Agent': USER_AGENT },
+        }, EXTERNAL_IMPORT_TIMEOUT_MS, readPngBufferResponse);
         if (!response.ok) {
             throw new Error(`Failed to download character: ${response.statusText}`);
         }
 
         const contentType = response.headers.get('content-type') || 'image/png'; // Default to 'image/png' if header is missing
-        const buffer = Buffer.from(await response.arrayBuffer());
         const fileName = `${sanitize(id)}.png`; // Assuming PNG, but adjust based on actual content or headers
 
         return {
@@ -807,11 +852,13 @@ function parseAICC(url) {
  */
 async function downloadGenericPng(url) {
     try {
-        const result = await fetch(url);
+        const { response: result, body: buffer } = await fetchExternalImportWithFallback(url, {
+            method: 'GET',
+            headers: { 'Accept': 'image/png,application/json,*/*;q=0.8', 'User-Agent': USER_AGENT },
+        }, EXTERNAL_IMPORT_TIMEOUT_MS, readNonHtmlBufferResponse);
 
         if (result.ok) {
-            const buffer = Buffer.from(await result.arrayBuffer());
-            let fileName = sanitize(result.url.split('?')[0].split('/').reverse()[0]);
+            let fileName = sanitize(url.split('?')[0].split('/').reverse()[0]);
             const contentType = result.headers.get('content-type') || 'image/png'; //yoink it from AICC function lol
 
             // The `importCharacter()` function detects the MIME (content-type) of the file
@@ -858,7 +905,10 @@ function parseRisuUrl(url) {
  * @returns {Promise<{buffer: Buffer, fileName: string, fileType: string}>}
  */
 async function downloadRisuCharacter(uuid) {
-    const result = await fetch(`https://realm.risuai.net/api/v1/download/png-v3/${uuid}?non_commercial=true`);
+    const { response: result, body: buffer } = await fetchExternalImportWithFallback(`https://realm.risuai.net/api/v1/download/png-v3/${uuid}?non_commercial=true`, {
+        method: 'GET',
+        headers: { 'Accept': 'image/png,*/*;q=0.8', 'User-Agent': USER_AGENT },
+    }, EXTERNAL_IMPORT_TIMEOUT_MS, readPngBufferResponse);
 
     if (!result.ok) {
         const text = await result.text();
@@ -866,7 +916,6 @@ async function downloadRisuCharacter(uuid) {
         throw new Error('Failed to download character');
     }
 
-    const buffer = Buffer.from(await result.arrayBuffer());
     const fileName = `${sanitize(uuid)}.png`;
     const fileType = 'image/png';
 
@@ -913,14 +962,13 @@ async function downloadPerchanceCharacter(slug) {
     try {
         const charURL = `${perchanceBaseURL}/${slug}`;
         console.log('Downloading Perchance character from URL:', charURL);
-        const result = await fetch(charURL, {
+        const { response: result, body: perchanceChar } = await fetchExternalImportWithFallback(charURL, {
+            method: 'GET',
             headers: { 'Content-Type': 'application/json', 'User-Agent': USER_AGENT },
-        });
+        }, EXTERNAL_IMPORT_TIMEOUT_MS, extractPerchanceCharacterFromGz);
 
         //decompress gzipped content
         if (result.ok) {
-            const perchanceChar = await extractPerchanceCharacterFromGz(result);
-
             const avatarUrl = perchanceChar.avatar?.url;
 
             //check if avatarURL is a base64 of any image type
@@ -1033,11 +1081,13 @@ async function fetchPerchanceAvatar(avatarUrl, isAvatarBase64) {
 
     // Fetch avatar from URL
     console.log('Fetching Perchance avatar from URL:', avatarUrl);
-    const avatarResponse = await fetch(avatarUrl, { headers: { 'User-Agent': USER_AGENT } });
+    const { response: avatarResponse, body: avatarBuffer } = await fetchExternalImportWithFallback(avatarUrl, {
+        method: 'GET',
+        headers: { 'Accept': 'image/png,image/*,*/*;q=0.8', 'User-Agent': USER_AGENT },
+    }, EXTERNAL_IMPORT_TIMEOUT_MS, readNonHtmlBufferResponse);
 
     if (avatarResponse.ok) {
         const avatarContentType = avatarResponse.headers.get('content-type');
-        const avatarBuffer = Buffer.from(await avatarResponse.arrayBuffer());
 
         if (avatarContentType === 'image/png') {
             return avatarBuffer;

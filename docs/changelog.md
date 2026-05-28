@@ -20,7 +20,7 @@
 - After import/create, the character list now falls back to the unfiltered entity list, clears search/favorite/group/folder/tag filters that hide the new card, re-renders the list, and highlights the imported card.
 - If the imported card is hidden by an assigned closed-folder tag, the frontend selects that folder so the new card is visible immediately.
 - Bumped the frontend build ID again so mobile browsers fetch the import visibility fix.
-- Fixed JanitorAI/JannyAI direct URL import for `jannyai.com` character links, with bounded retries through the configured Resin proxy pool for official Janny API and PNG downloads.
+- Fixed external character URL imports to try the local connection first, then fall back to bounded no-account Resin proxy-pool retries for blocked or unstable provider downloads, including JanitorAI/JannyAI, Chub, AICC, RisuAI, Perchance, and whitelisted direct PNG URLs.
 
 #### Smoothness and recovery improvements
 

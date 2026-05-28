@@ -63,6 +63,13 @@ function normalizeCharacterInternalName(value) {
     return truncateUtf8Bytes(sanitized, MAX_CHARACTER_INTERNAL_NAME_BYTES).trim() || 'character';
 }
 
+function normalizeCharacterDisplayName(value, fallback = 'character') {
+    return String(value ?? '')
+        .replace(/[\u0000-\u001F\u007F]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim() || fallback;
+}
+
 function resolveCharacterAvatarPath(request, avatarUrl) {
     const avatarName = sanitize(String(avatarUrl || '').trim());
     if (!avatarName) {
@@ -1049,7 +1056,7 @@ async function importFromYaml(uploadPath, context, preservedFileName) {
     fs.unlinkSync(uploadPath);
     const yamlData = yaml.parse(fileText);
     console.info('Importing from YAML');
-    yamlData.name = sanitize(yamlData.name);
+    yamlData.name = normalizeCharacterDisplayName(yamlData.name);
     const fileName = preservedFileName || getPngName(yamlData.name, context.request.user.directories);
     let char = convertToV2({
         'name': yamlData.name,
@@ -1091,7 +1098,7 @@ async function importFromCharX(uploadPath, { request }, preservedFileName) {
     let processedCard = getStoredCharaCardV2(card, request.user.directories);
     unsetPrivateFields(processedCard);
     processedCard.create_date = new Date().toISOString();
-    _.set(processedCard, 'data.name', sanitize(_.get(processedCard, 'data.name', processedCard.name)));
+    _.set(processedCard, 'data.name', normalizeCharacterDisplayName(_.get(processedCard, 'data.name', processedCard.name)));
 
     const processedCardName = _.get(processedCard, 'data.name', 'Unnamed');
     const fileName = preservedFileName || getPngName(processedCardName, request.user.directories);
@@ -1213,7 +1220,7 @@ async function importFromJson(uploadPath, { request }, preservedFileName) {
         return result ? pngName : '';
     } else if (jsonData.name !== undefined) {
         console.info('Importing from v1 json');
-        jsonData.name = sanitize(jsonData.name);
+        jsonData.name = normalizeCharacterDisplayName(jsonData.name);
         if (jsonData.creator_notes) {
             jsonData.creator_notes = jsonData.creator_notes.replace('Creator\'s notes go here.', '');
         }
@@ -1240,7 +1247,7 @@ async function importFromJson(uploadPath, { request }, preservedFileName) {
     } else if (jsonData.char_name !== undefined) {
         //json Pygmalion notepad
         console.info('Importing from gradio json');
-        jsonData.char_name = sanitize(jsonData.char_name);
+        jsonData.char_name = normalizeCharacterDisplayName(jsonData.char_name);
         if (jsonData.creator_notes) {
             jsonData.creator_notes = jsonData.creator_notes.replace('Creator\'s notes go here.', '');
         }
@@ -1282,10 +1289,11 @@ async function importFromPng(uploadPath, { request }, preservedFileName) {
 
     let jsonData = JSON.parse(imgData);
 
-    if (jsonData.data?.name) {
-        jsonData.data.name = sanitize(jsonData.data.name);
+    const displayName = normalizeCharacterDisplayName(jsonData.data?.name || jsonData.name);
+    if (jsonData.data) {
+        jsonData.data.name = displayName;
     }
-    jsonData.name = sanitize(jsonData.data?.name || jsonData.name);
+    jsonData.name = displayName;
     const pngName = preservedFileName || getPngName(jsonData.name, request.user.directories);
 
     if (jsonData.spec !== undefined) {
@@ -1336,7 +1344,7 @@ router.post('/create', getFileNameValidationFunction('file_name'), async functio
     try {
         if (!request.body) return response.sendStatus(400);
 
-        request.body.ch_name = sanitize(request.body.ch_name);
+        request.body.ch_name = normalizeCharacterDisplayName(request.body.ch_name);
 
         const char = JSON.stringify(charaFormatData(request.body, request.user.directories));
         const internalName = request.body.file_name
@@ -1369,7 +1377,7 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
     }
 
     const oldAvatarName = request.body.avatar_url;
-    const newName = sanitize(request.body.new_name);
+    const newName = normalizeCharacterDisplayName(request.body.new_name);
     const oldInternalName = path.parse(request.body.avatar_url).name;
     const newInternalName = getPngName(newName, request.user.directories, { excludeInternalName: oldInternalName });
     const newAvatarName = `${newInternalName}.png`;

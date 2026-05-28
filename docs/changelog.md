@@ -21,6 +21,7 @@
 - If the imported card is hidden by an assigned closed-folder tag, the frontend selects that folder so the new card is visible immediately.
 - Bumped the frontend build ID again so mobile browsers fetch the import visibility fix.
 - Fixed external character URL imports to try the local connection first, then fall back to bounded no-account Resin proxy-pool retries for blocked or unstable provider downloads, including JanitorAI/JannyAI, Chub, AICC, RisuAI, Perchance, and whitelisted direct PNG URLs.
+- Fixed character imports with names made of filesystem-reserved symbols so the display name is preserved while only the internal avatar filename is sanitized.
 
 #### Smoothness and recovery improvements
 

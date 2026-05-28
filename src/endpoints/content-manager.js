@@ -21,6 +21,9 @@ const scaffoldIndexPath = path.join(scaffoldDirectory, 'index.json');
 
 const WHITELIST_GENERIC_URL_DOWNLOAD_SOURCES = getConfigValue('whitelistImportDomains', []);
 const USER_AGENT = 'Luker';
+const EXTERNAL_IMPORT_TIMEOUT_MS = 20_000;
+const JANNY_API_TIMEOUT_MS = 12_000;
+const JANNY_CONTENT_DOMAINS = ['jannyai.com', 'jannyai.me', 'janitorai.com', 'janitorai.me'];
 
 /**
  * @typedef {Object} ContentItem
@@ -591,24 +594,187 @@ function parseChubUrl(str) {
     return null;
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = EXTERNAL_IMPORT_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    timeout.unref?.();
+
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw new Error(`Request timed out after ${timeoutMs}ms`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function isJannyContentHost(host) {
+    const normalizedHost = host.toLowerCase();
+    return JANNY_CONTENT_DOMAINS.some(domain => normalizedHost === domain || normalizedHost.endsWith(`.${domain}`));
+}
+
+function getReaderHeader(text, label) {
+    const match = text.match(new RegExp(`^${escapeRegExp(label)}:\\s*(.+)$`, 'im'));
+    return match?.[1]?.trim() || '';
+}
+
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeReaderText(value) {
+    return String(value || '').replace(/\r\n/g, '\n').trim();
+}
+
+function getReaderMarkdownContent(text) {
+    const marker = 'Markdown Content:';
+    const index = text.indexOf(marker);
+    return normalizeReaderText(index === -1 ? text : text.slice(index + marker.length));
+}
+
+function getReaderField(markdown, label, allLabels) {
+    const labelsPattern = allLabels.map(escapeRegExp).join('|');
+    const regex = new RegExp(`(?:^|\\n)\\s*(?:\\*\\*)?${escapeRegExp(label)}(?:\\*\\*)?\\s*:\\s*([\\s\\S]*?)(?=\\n\\s*(?:\\*\\*)?(?:${labelsPattern})(?:\\*\\*)?\\s*:|$)`, 'i');
+    const match = markdown.match(regex);
+    return normalizeReaderText(match?.[1] || '');
+}
+
+function getJannyNameFromUrl(url) {
+    try {
+        const parsedUrl = new URL(url);
+        const lastPathPart = decodeURIComponent(parsedUrl.pathname.split('/').filter(Boolean).pop() || '');
+        const slug = lastPathPart.split('_character-')[1] || '';
+
+        return slug
+            .split('-')
+            .filter(Boolean)
+            .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(' ');
+    } catch {
+        return '';
+    }
+}
+
+async function downloadJannyCharacterFromReader(url, uuid) {
+    const parsedUrl = new URL(url);
+    const readerUrl = `https://r.jina.ai/http://${parsedUrl.host}${parsedUrl.pathname}${parsedUrl.search}`;
+    const result = await fetchWithTimeout(readerUrl, {
+        method: 'GET',
+        headers: { 'Accept': 'text/plain', 'User-Agent': USER_AGENT },
+    });
+
+    if (!result.ok) {
+        const text = await result.text();
+        console.error('Janny reader returned error', result.status, result.statusText, text.slice(0, 500));
+        throw new Error('Failed to download character');
+    }
+
+    const readerText = await result.text();
+    const markdown = getReaderMarkdownContent(readerText);
+    const fieldLabels = [
+        'Description',
+        'Personality',
+        'Scenario',
+        'First Message',
+        'Example Dialogs',
+        'Example Dialogue',
+        'Example Messages',
+        'Creator',
+        'Tags',
+    ];
+    const name = getReaderHeader(readerText, 'Title') || getJannyNameFromUrl(url) || uuid;
+    const description = getReaderField(markdown, 'Description', fieldLabels);
+    const personality = getReaderField(markdown, 'Personality', fieldLabels);
+    const scenario = getReaderField(markdown, 'Scenario', fieldLabels);
+    const firstMessage = getReaderField(markdown, 'First Message', fieldLabels);
+    const exampleDialogs = getReaderField(markdown, 'Example Dialogs', fieldLabels)
+        || getReaderField(markdown, 'Example Dialogue', fieldLabels)
+        || getReaderField(markdown, 'Example Messages', fieldLabels);
+    const tags = getReaderField(markdown, 'Tags', fieldLabels)
+        .split(',')
+        .map(tag => tag.trim())
+        .filter(Boolean);
+
+    if (!description && !personality && !scenario && !firstMessage) {
+        throw new Error('Failed to parse character data');
+    }
+
+    const characterCard = {
+        spec: 'chara_card_v2',
+        spec_version: '2.0',
+        data: {
+            name,
+            description: description || personality,
+            personality: description ? personality : '',
+            scenario,
+            first_mes: firstMessage,
+            mes_example: exampleDialogs,
+            creator_notes: `Imported from ${url}`,
+            system_prompt: '',
+            post_history_instructions: '',
+            alternate_greetings: [],
+            tags,
+            creator: '',
+            character_version: '',
+            extensions: {
+                jannyai: {
+                    source_url: url,
+                    character_id: uuid,
+                    imported_via: 'reader',
+                },
+            },
+        },
+    };
+
+    const defaultAvatarPath = path.join(serverDirectory, DEFAULT_AVATAR_PATH);
+    const defaultAvatarBuffer = fs.readFileSync(defaultAvatarPath);
+    const buffer = write(defaultAvatarBuffer, JSON.stringify(characterCard));
+    const safeName = sanitize(name) || sanitize(uuid);
+
+    return { buffer, fileName: `${safeName}.png`, fileType: 'image/png' };
+}
+
 // Warning: Some characters might not exist in JannyAI.me
-async function downloadJannyCharacter(uuid) {
+async function downloadJannyCharacter(uuid, sourceUrl = '') {
+    try {
+        return await downloadJannyCharacterFromApi(uuid);
+    } catch (error) {
+        if (!sourceUrl) {
+            throw error;
+        }
+
+        console.warn('Janny API download failed, trying reader fallback:', error.message);
+        return await downloadJannyCharacterFromReader(sourceUrl, uuid);
+    }
+}
+
+async function downloadJannyCharacterFromApi(uuid) {
     // This endpoint is being guarded behind Bot Fight Mode of Cloudflare
     // So hosted ST on Azure/AWS/GCP/Collab might get blocked by IP
     // Should work normally on self-host PC/Android
-    const result = await fetch('https://api.jannyai.com/api/v1/download', {
+    const result = await fetchWithTimeout('https://api.jannyai.com/api/v1/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             'characterId': uuid,
         }),
-    });
+    }, JANNY_API_TIMEOUT_MS);
 
     if (result.ok) {
         /** @type {any} */
         const downloadResult = await result.json();
-        if (downloadResult.status === 'ok') {
-            const imageResult = await fetch(downloadResult.downloadUrl);
+        if (downloadResult.status === 'ok' && downloadResult.downloadUrl) {
+            const imageResult = await fetchWithTimeout(downloadResult.downloadUrl, {}, EXTERNAL_IMPORT_TIMEOUT_MS);
+
+            if (!imageResult.ok) {
+                const text = await imageResult.text();
+                console.error('Janny image returned error', imageResult.status, imageResult.statusText, text.slice(0, 500));
+                throw new Error('Failed to download character');
+            }
+
             const buffer = Buffer.from(await imageResult.arrayBuffer());
             const fileName = `${sanitize(uuid)}.png`;
             const fileType = imageResult.headers.get('content-type');
@@ -618,7 +784,8 @@ async function downloadJannyCharacter(uuid) {
             console.error('Janny failed to download', downloadResult);
         }
     } else {
-        console.error('Janny returned error', result.statusText, await result.text());
+        const text = await result.text();
+        console.error('Janny returned error', result.status, result.statusText, text.slice(0, 500));
     }
 
     throw new Error('Failed to download character');
@@ -987,7 +1154,7 @@ router.post('/importURL', async (request, response) => {
         let type;
 
         const isChub = host.includes('chub.ai') || host.includes('characterhub.org');
-        const isJannnyContent = host.includes('janitorai');
+        const isJannnyContent = isJannyContentHost(host);
         const isPygmalionContent = host.includes('pygmalion.chat');
         const isAICharacterCardsContent = host.includes('aicharactercards.com');
         const isRisu = host.includes('realm.risuai.net');
@@ -1009,7 +1176,7 @@ router.post('/importURL', async (request, response) => {
             }
 
             type = 'character';
-            result = await downloadJannyCharacter(uuid);
+            result = await downloadJannyCharacter(uuid, url);
         } else if (isAICharacterCardsContent) {
             const AICCParsed = parseAICC(url);
             if (!AICCParsed) {
@@ -1088,7 +1255,7 @@ router.post('/importUUID', async (request, response) => {
             result = await downloadPygmalionCharacter(uuid);
         } else if (isJannny) {
             console.info('Downloading Janitor character:', uuid.split('_')[0]);
-            result = await downloadJannyCharacter(uuid.split('_')[0]);
+            result = await downloadJannyCharacter(uuid.split('_')[0], `https://jannyai.com/characters/${uuid}`);
         } else if (isAICC) {
             const [, author, card] = uuid.split('/');
             console.info('Downloading AICC character:', `${author}/${card}`);

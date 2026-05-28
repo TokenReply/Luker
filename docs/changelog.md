@@ -20,6 +20,7 @@
 - After import/create, the character list now falls back to the unfiltered entity list, clears search/favorite/group/folder/tag filters that hide the new card, re-renders the list, and highlights the imported card.
 - If the imported card is hidden by an assigned closed-folder tag, the frontend selects that folder so the new card is visible immediately.
 - Bumped the frontend build ID again so mobile browsers fetch the import visibility fix.
+- Fixed JanitorAI/JannyAI direct URL import for `jannyai.com` character links, including a timeout and reader fallback when the official Janny download API is blocked by Cloudflare.
 
 #### Smoothness and recovery improvements
 
